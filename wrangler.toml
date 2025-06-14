@@ -1,0 +1,29 @@
+name = "xiaohongshu-parser"
+account_id = "592d0b510da82bd943e23e976086a643"
+main = "dist/index.js"
+compatibility_date = "2024-11-10"
+compatibility_flags = ["nodejs_compat"]
+
+# KV Namespace binding
+kv_namespaces = [
+  { binding = "CACHE_KV", id = "dd58baf330fc4b75b190d16e4b8982bc" }
+]
+
+# R2 bucket binding
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "moodcloud"
+
+# Environment variables
+[vars]
+MAX_RETRIES = 2
+CACHE_TTL = 86400
+IMAGE_HOST_USERNAME = "liuyiran"
+IMAGE_HOST_PASSWORD = "000609"
+ADMIN_KEY = "FmV+28CHSQNy+LTA1+lMobpytSWBihLjyWwQQwmqn84="
+
+# 开发环境配置
+[env.dev.vars]
+MAX_RETRIES = 2
+CACHE_TTL = 3600
+ADMIN_KEY = "dev-admin-key-for-testing"  # 开发环境使用的管理员密钥 

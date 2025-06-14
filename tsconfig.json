@@ -1,0 +1,79 @@
+{
+  "compilerOptions": {
+    // 基础配置
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "node",
+    "lib": ["ES2022", "DOM"],
+
+    // TypeScript配置
+    "allowJs": true,
+    "checkJs": false,
+    "incremental": true,
+
+    // 严格类型检查（渐进式启用）
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": false,
+
+    // 输出配置
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "removeComments": false,
+
+    // 模块解析
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+
+    // 性能优化
+    "skipLibCheck": true,
+    "noEmitOnError": true,
+
+    // 路径映射
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@/utils/*": ["./src/utils/*"]
+    },
+
+    // 实验性功能
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+
+  // 包含的文件
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.js"
+  ],
+
+  // 排除的文件
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts",
+    "**/*.test.js",
+    "**/*.spec.ts",
+    "**/*.spec.js",
+    "test-*.js",
+    "**/*.backup"
+  ],
+
+  // TypeScript编译选项
+  "ts-node": {
+    "esm": true
+  }
+}
