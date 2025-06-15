@@ -9,6 +9,14 @@
 
 import { IMAGE_HOST_CONFIG, type ImageHostConfig } from './config.js';
 
+// ==================== 常量配置 ====================
+
+/** 分片大小：10MB */
+const CHUNK_SIZE = 10 * 1024 * 1024;
+
+/** 大文件阈值：19MB - 超过此大小使用分片上传 */
+const LARGE_FILE_THRESHOLD = 19 * 1024 * 1024;
+
 // ==================== 类型定义 ====================
 
 /** 环境变量接口 */
@@ -38,6 +46,51 @@ interface ObjectUploadResponse {
   message?: string;
   error?: string;
 }
+
+/** 分片上传响应格式 */
+interface ChunkUploadResponse {
+  success: boolean;
+  message: string;
+  chunkIndex?: number;
+  totalChunks?: number;
+}
+
+/** 分片合并请求格式 */
+interface MergeChunksRequest {
+  sessionId: string;
+  fileName: string;
+  totalChunks: number;
+  fileSize: number;
+  fileType: string;
+}
+
+/** 分片合并响应格式 */
+interface MergeChunksResponse {
+  success: boolean;
+  message: string;
+  fileId?: string;
+  url?: string;
+  isChunkFile?: boolean;
+  result?: {
+    src?: string;
+    name?: string;
+    size?: number;
+    type?: string;
+    isChunkFile?: boolean;
+  };
+}
+
+/** 上传进度信息 */
+interface UploadProgress {
+  chunkIndex: number;
+  totalChunks: number;
+  uploadedBytes: number;
+  totalBytes: number;
+  percentage: number;
+}
+
+/** 进度回调函数类型 */
+type ProgressCallback = (progress: UploadProgress) => void;
 
 /** 上传响应联合类型 */
 type UploadResponse = ArrayUploadResponse[] | ObjectUploadResponse;
@@ -179,26 +232,31 @@ export class ImageHostService {
   }
 
   /**
-   * 上传文件到图床
+   * 生成会话ID
+   * @returns 随机会话ID
+   */
+  private generateSessionId(): string {
+    return Math.random().toString(36).substring(2, 15) +
+           Math.random().toString(36).substring(2, 15);
+  }
+
+  /**
+   * 上传文件到图床（智能选择普通上传或分片上传）
    * @param fileData - 文件数据
    * @param fileName - 文件名
    * @param contentType - 内容类型
+   * @param onProgress - 进度回调函数
    * @returns 上传后的文件URL
    */
   public async uploadFile(
-    fileData: FileData, 
-    fileName: string, 
-    contentType?: string
+    fileData: FileData,
+    fileName: string,
+    contentType?: string,
+    onProgress?: ProgressCallback
   ): Promise<string> {
     console.log(`🔄 [${new Date().toISOString()}] 开始上传文件到图床: ${fileName}, 类型: ${contentType}`);
 
     try {
-      // 确保已登录并获取令牌
-      const token = await this.ensureAuthenticated();
-
-      // 准备表单数据
-      const formData = new FormData();
-      
       // 如果fileData是URL，需要先下载
       let processedFileData: ArrayBuffer | Blob;
       if (typeof fileData === 'string' && fileData.startsWith('http')) {
@@ -212,98 +270,338 @@ export class ImageHostService {
       } else {
         processedFileData = fileData as ArrayBuffer | Blob;
       }
-      
-      // 创建文件对象
-      const file = new File([processedFileData], fileName, {
-        type: contentType || this.getContentType(fileName)
-      });
-      
-      // 根据API文档，使用 'file' 字段名
-      formData.append('file', file);
 
-      // 构建请求头
-      const headers: Record<string, string> = {
-        'Authorization': `Bearer ${token}`
-      };
+      // 获取文件大小
+      const fileSize = processedFileData instanceof ArrayBuffer ?
+        processedFileData.byteLength : processedFileData.size;
 
-      // 发送上传请求（设置30秒超时）
-      console.log(`发送上传请求到: ${this.config.UPLOAD_URL}`);
-      console.log(`请求头:`, headers);
-      console.log(`文件信息: ${fileName}, 大小: ${file.size} bytes`);
+      console.log(`文件大小: ${fileSize} 字节 (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
 
-      let response: Response;
-      const uploadController = new AbortController();
-      const uploadTimeoutId = setTimeout(() => {
-        console.log('上传请求超时，正在中止...');
-        uploadController.abort();
-      }, 30000);
-
-      try {
-        response = await fetch(this.config.UPLOAD_URL, {
-          method: 'POST',
-          headers: headers,
-          body: formData,
-          signal: uploadController.signal
-        });
-      } catch (fetchError) {
-        clearTimeout(uploadTimeoutId);
-        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error('上传请求超时（30秒）');
-        }
-        console.error('上传请求异常:', fetchError);
-        const errorMessage = fetchError instanceof Error ? fetchError.message : String(fetchError);
-        throw new Error(`上传请求失败: ${errorMessage}`);
-      } finally {
-        clearTimeout(uploadTimeoutId);
+      // 智能选择上传方式
+      if (fileSize > LARGE_FILE_THRESHOLD) {
+        console.log(`文件大小超过${LARGE_FILE_THRESHOLD / 1024 / 1024}MB，使用分片上传`);
+        return await this.uploadFileWithChunking(processedFileData, fileName, contentType, onProgress);
+      } else {
+        console.log(`文件大小小于等于${LARGE_FILE_THRESHOLD / 1024 / 1024}MB，使用普通上传`);
+        return await this.uploadFileNormal(processedFileData, fileName, contentType);
       }
-      
-      console.log(`上传响应状态: ${response.status} ${response.statusText}`);
-      const headersObj: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        headersObj[key] = value;
-      });
-      console.log(`响应头:`, headersObj);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`上传请求失败: ${response.status} ${response.statusText}`);
-        console.error(`错误响应: ${errorText}`);
-        throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
-      }
-
-      // 先获取响应文本，然后尝试解析JSON
-      const responseText = await response.text();
-      console.log(`原始响应文本:`, responseText);
-
-      let result: UploadResponse;
-      try {
-        result = JSON.parse(responseText) as UploadResponse;
-      } catch (parseError) {
-        console.error(`JSON解析失败:`, parseError);
-        throw new Error(`响应不是有效的JSON: ${responseText}`);
-      }
-      
-      console.log('图床上传响应详情:', {
-        type: typeof result,
-        isArray: Array.isArray(result),
-        length: Array.isArray(result) ? result.length : 'N/A',
-        content: JSON.stringify(result, null, 2)
-      });
-
-      // 检查是否有错误
-      if (!Array.isArray(result) && 'error' in result && result.error) {
-        throw new Error(`上传失败: ${result.error}`);
-      }
-
-      // 提取文件URL
-      const fileUrl = this.extractFileUrl(result, fileName);
-
-      console.log(`上传成功，文件URL: ${fileUrl}`);
-      return fileUrl;
     } catch (error) {
       console.error(`上传文件失败: ${fileName}`, error);
       throw error;
     }
+  }
+
+  /**
+   * 普通上传方法（用于小文件）
+   * @param fileData - 文件数据
+   * @param fileName - 文件名
+   * @param contentType - 内容类型
+   * @returns 上传后的文件URL
+   */
+  private async uploadFileNormal(
+    fileData: ArrayBuffer | Blob,
+    fileName: string,
+    contentType?: string
+  ): Promise<string> {
+    // 确保已登录并获取令牌
+    const token = await this.ensureAuthenticated();
+
+    // 准备表单数据
+    const formData = new FormData();
+
+    // 创建文件对象
+    const file = new File([fileData], fileName, {
+      type: contentType || this.getContentType(fileName)
+    });
+
+    // 根据API文档，使用 'file' 字段名
+    formData.append('file', file);
+
+    // 构建请求头
+    const headers: Record<string, string> = {
+      'Authorization': `Bearer ${token}`
+    };
+
+    // 发送上传请求（设置30秒超时）
+    console.log(`发送普通上传请求到: ${this.config.UPLOAD_URL}`);
+    console.log(`请求头:`, headers);
+    console.log(`文件信息: ${fileName}, 大小: ${file.size} bytes`);
+
+    let response: Response;
+    const uploadController = new AbortController();
+    const uploadTimeoutId = setTimeout(() => {
+      console.log('上传请求超时，正在中止...');
+      uploadController.abort();
+    }, 30000);
+
+    try {
+      response = await fetch(this.config.UPLOAD_URL, {
+        method: 'POST',
+        headers: headers,
+        body: formData,
+        signal: uploadController.signal
+      });
+    } catch (fetchError) {
+      clearTimeout(uploadTimeoutId);
+      if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+        throw new Error('上传请求超时（30秒）');
+      }
+      console.error('上传请求异常:', fetchError);
+      const errorMessage = fetchError instanceof Error ? fetchError.message : String(fetchError);
+      throw new Error(`上传请求失败: ${errorMessage}`);
+    } finally {
+      clearTimeout(uploadTimeoutId);
+    }
+
+    console.log(`上传响应状态: ${response.status} ${response.statusText}`);
+    const headersObj: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      headersObj[key] = value;
+    });
+    console.log(`响应头:`, headersObj);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`上传请求失败: ${response.status} ${response.statusText}`);
+      console.error(`错误响应: ${errorText}`);
+      throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+    }
+
+    // 先获取响应文本，然后尝试解析JSON
+    const responseText = await response.text();
+    console.log(`原始响应文本:`, responseText);
+
+    let result: UploadResponse;
+    try {
+      result = JSON.parse(responseText) as UploadResponse;
+    } catch (parseError) {
+      console.error(`JSON解析失败:`, parseError);
+      throw new Error(`响应不是有效的JSON: ${responseText}`);
+    }
+
+    console.log('图床上传响应详情:', {
+      type: typeof result,
+      isArray: Array.isArray(result),
+      length: Array.isArray(result) ? result.length : 'N/A',
+      content: JSON.stringify(result, null, 2)
+    });
+
+    // 检查是否有错误
+    if (!Array.isArray(result) && 'error' in result && result.error) {
+      throw new Error(`上传失败: ${result.error}`);
+    }
+
+    // 提取文件URL
+    const fileUrl = this.extractFileUrl(result, fileName);
+
+    console.log(`普通上传成功，文件URL: ${fileUrl}`);
+    return fileUrl;
+  }
+
+  /**
+   * 分片上传方法（用于大文件）
+   * @param fileData - 文件数据
+   * @param fileName - 文件名
+   * @param contentType - 内容类型
+   * @param onProgress - 进度回调函数
+   * @returns 上传后的文件URL
+   */
+  private async uploadFileWithChunking(
+    fileData: ArrayBuffer | Blob,
+    fileName: string,
+    contentType?: string,
+    onProgress?: ProgressCallback
+  ): Promise<string> {
+    const fileSize = fileData instanceof ArrayBuffer ? fileData.byteLength : fileData.size;
+    const finalContentType = contentType || this.getContentType(fileName);
+
+    console.log(`开始分片上传: ${fileName}, 大小: ${fileSize} 字节, 类型: ${finalContentType}`);
+
+    // 检查文件大小限制
+    if (fileSize > 100 * 1024 * 1024) {
+      throw new Error('文件大小超过 100MB 限制');
+    }
+
+    // 生成会话ID
+    const sessionId = this.generateSessionId();
+    console.log(`生成会话ID: ${sessionId}`);
+
+    // 计算分片数量
+    const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
+    console.log(`文件将被分为 ${totalChunks} 个分片，每个分片大小: ${CHUNK_SIZE / 1024 / 1024}MB`);
+
+    // 将文件数据转换为ArrayBuffer以便分片
+    let arrayBuffer: ArrayBuffer;
+    if (fileData instanceof ArrayBuffer) {
+      arrayBuffer = fileData;
+    } else {
+      arrayBuffer = await fileData.arrayBuffer();
+    }
+
+    // 上传所有分片
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, fileSize);
+      const chunkData = arrayBuffer.slice(start, end);
+
+      console.log(`上传分片 ${i + 1}/${totalChunks}, 大小: ${chunkData.byteLength} 字节`);
+
+      await this.uploadChunk(sessionId, i, chunkData, fileName, totalChunks, fileSize, finalContentType);
+
+      // 更新进度
+      if (onProgress) {
+        onProgress({
+          chunkIndex: i,
+          totalChunks,
+          uploadedBytes: end,
+          totalBytes: fileSize,
+          percentage: Math.round((end / fileSize) * 100)
+        });
+      }
+    }
+
+    console.log(`所有分片上传完成，开始合并...`);
+
+    // 合并分片
+    const result = await this.mergeChunks({
+      sessionId,
+      fileName,
+      totalChunks,
+      fileSize,
+      fileType: finalContentType
+    });
+
+    if (!result.success) {
+      throw new Error(`分片合并失败: ${result.message}`);
+    }
+
+    // 处理分片合并响应的不同格式
+    let fileUrl: string;
+
+    if (result.result && result.result.src) {
+      // 新格式：{success: true, result: {src: '/file/...', ...}}
+      fileUrl = `${this.config.DOMAIN}${result.result.src}`;
+      console.log(`✅ 使用result.src字段构建URL: ${fileUrl}`);
+    } else if (result.url) {
+      // 旧格式：{success: true, url: '...'}
+      fileUrl = result.url.startsWith('http') ? result.url : `${this.config.DOMAIN}${result.url}`;
+      console.log(`✅ 使用url字段构建URL: ${fileUrl}`);
+    } else if (result.fileId) {
+      // 备用格式：{success: true, fileId: '...'}
+      fileUrl = `${this.config.DOMAIN}/file/${result.fileId}`;
+      console.log(`✅ 使用fileId字段构建URL: ${fileUrl}`);
+    } else {
+      console.error(`❌ 无法从分片合并响应中提取URL`);
+      console.error(`响应内容:`, JSON.stringify(result, null, 2));
+      throw new Error(`分片合并成功但无法提取文件URL`);
+    }
+
+    console.log(`分片上传成功，文件URL: ${fileUrl}`);
+    return fileUrl;
+  }
+
+  /**
+   * 上传单个分片
+   * @param sessionId - 会话ID
+   * @param chunkIndex - 分片索引
+   * @param chunkData - 分片数据
+   * @param fileName - 文件名（可选，用于推荐参数）
+   * @param totalChunks - 总分片数（可选，用于推荐参数）
+   * @param fileSize - 文件总大小（可选，用于推荐参数）
+   * @param fileType - 文件类型（可选，用于推荐参数）
+   * @returns 分片上传响应
+   */
+  private async uploadChunk(
+    sessionId: string,
+    chunkIndex: number,
+    chunkData: ArrayBuffer,
+    fileName?: string,
+    totalChunks?: number,
+    fileSize?: number,
+    fileType?: string
+  ): Promise<ChunkUploadResponse> {
+    // 确保已登录并获取令牌
+    const token = await this.ensureAuthenticated();
+
+    const formData = new FormData();
+    const chunkBlob = new Blob([chunkData]);
+
+    // 必需参数（根据API文档）
+    formData.append('file', chunkBlob);                    // ✅ 必需：分片数据
+    formData.append('chunkIndex', chunkIndex.toString());  // ✅ 必需：分片索引(字符串)
+    formData.append('sessionId', sessionId);               // ✅ 必需：会话ID
+
+    // 推荐参数（提高成功率）
+    if (totalChunks !== undefined) {
+      formData.append('totalChunks', totalChunks.toString());
+    }
+    if (fileName) {
+      formData.append('originalFileName', fileName);
+    }
+    if (fileType) {
+      formData.append('originalFileType', fileType);
+    }
+    if (fileSize !== undefined) {
+      formData.append('originalFileSize', fileSize.toString());
+    }
+
+    const chunkUploadUrl = `${this.config.DOMAIN}/upload-chunk`;
+    console.log(`上传分片到: ${chunkUploadUrl}`);
+
+    const response = await fetch(chunkUploadUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      },
+      body: formData
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`分片上传失败: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    const result: ChunkUploadResponse = await response.json();
+
+    if (!result.success) {
+      throw new Error(`分片上传失败: ${result.message}`);
+    }
+
+    console.log(`分片 ${chunkIndex} 上传成功`);
+    return result;
+  }
+
+  /**
+   * 合并分片
+   * @param request - 合并请求参数
+   * @returns 合并响应
+   */
+  private async mergeChunks(request: MergeChunksRequest): Promise<MergeChunksResponse> {
+    // 确保已登录并获取令牌
+    const token = await this.ensureAuthenticated();
+
+    const mergeUrl = `${this.config.DOMAIN}/merge-chunks`;
+    console.log(`合并分片请求到: ${mergeUrl}`);
+    console.log(`合并参数:`, request);
+
+    const response = await fetch(mergeUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(request)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`分片合并失败: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    const result: MergeChunksResponse = await response.json();
+    console.log(`分片合并响应:`, result);
+
+    return result;
   }
 
   /**

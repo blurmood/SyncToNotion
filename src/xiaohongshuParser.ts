@@ -835,9 +835,12 @@ export async function parseXiaohongshuLink(
       if (result.contentType === 'video' && !isLivePhoto) {
         console.log(`🎬 URL参数明确指定为视频内容 (type=video)，跳过Live图分析`);
 
-        // 传统视频处理逻辑
+        // 视频内容处理逻辑：只保留主视频
         result.video = allVideos[0];
-        result.videos = allVideos;
+        result.videos = [allVideos[0]]; // 视频内容只保留一个主视频
+
+        console.log(`🎬 视频内容处理：主视频 = ${result.video}`);
+        console.log(`🎬 过滤掉 ${allVideos.length - 1} 个额外视频，只保留主视频`);
 
         // 普通视频内容优化：封面图片单独处理，不放入图片列表
         if (result.images.length > 0) {
@@ -860,11 +863,16 @@ export async function parseXiaohongshuLink(
 
       } else {
         // 判断是否为真正的Live图内容
+        // 优先级：URL参数 > 媒体分析结果
         const isRealLivePhoto = (
-          mediaAnalysis.livePhotoGroups > 1 || // 多组Live图
-          (mediaAnalysis.livePhotoGroups > 0 && mediaAnalysis.regularImages > 0 && result.contentType !== 'video') || // 混合内容但非视频
-          (mediaAnalysis.livePhotoGroups > 0 && result.contentType === 'image') || // 图文类型但有Live图组件
-          isLivePhoto // URL参数明确指定为Live图
+          // 如果URL参数明确指定为视频且不是Live图，则不应该被识别为Live图
+          result.contentType === 'video' && !isLivePhoto ? false :
+          (
+            mediaAnalysis.livePhotoGroups > 1 || // 多组Live图
+            (mediaAnalysis.livePhotoGroups > 0 && mediaAnalysis.regularImages > 0 && result.contentType !== 'video') || // 混合内容但非视频
+            (mediaAnalysis.livePhotoGroups > 0 && result.contentType === 'image') || // 图文类型但有Live图组件
+            isLivePhoto // URL参数明确指定为Live图
+          )
         );
 
         if (isRealLivePhoto) {
@@ -893,7 +901,14 @@ export async function parseXiaohongshuLink(
         } else {
           // 传统视频处理逻辑
           result.video = allVideos[0];
-          result.videos = allVideos;
+
+          // 如果是视频内容，只保留主视频；否则保留所有视频
+          if (result.contentType === 'video') {
+            result.videos = [allVideos[0]]; // 视频内容只保留一个主视频
+            console.log(`🎬 传统视频处理：只保留主视频，过滤掉 ${allVideos.length - 1} 个额外视频`);
+          } else {
+            result.videos = allVideos; // 非视频内容保留所有视频
+          }
 
           if (result.contentType === 'video') {
             // 普通视频内容优化：封面图片单独处理，不放入图片列表

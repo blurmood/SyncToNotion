@@ -71,6 +71,16 @@ export interface ImageHostConfig {
   readonly TOKEN_TTL: number;
 }
 
+/** CDN代理配置接口 */
+export interface ProxyConfig {
+  /** 代理Worker URL */
+  readonly WORKER_URL: string;
+  /** 代理版本 */
+  readonly VERSION: string;
+  /** 文件大小阈值（字节） */
+  readonly SIZE_THRESHOLD: number;
+}
+
 // ==================== 配置实例 ====================
 
 /** R2存储配置 */
@@ -145,6 +155,18 @@ export const IMAGE_HOST_CONFIG: ImageHostConfig = {
 
   // 令牌有效期（7天，单位：毫秒）
   TOKEN_TTL: 1000 * 60 * 60 * 24 * 7
+} as const;
+
+/** CDN代理配置 */
+export const PROXY_CONFIG: ProxyConfig = {
+  // 代理Worker URL
+  WORKER_URL: 'https://media-proxy.liuyiran.workers.dev',
+
+  // 代理版本
+  VERSION: 'v1',
+
+  // 文件大小阈值：100MB (与图床限制保持一致，避免夹缝问题)
+  SIZE_THRESHOLD: 100 * 1024 * 1024
 } as const;
 
 // ==================== 工具函数 ====================

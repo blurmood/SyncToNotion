@@ -10,7 +10,7 @@
 import { Router } from 'itty-router';
 import { parseXiaohongshu } from './xiaohongshuParser.js';
 import { parseDouyin } from './douyinParser.js';
-import { handleMediaFiles, processMediaFile, initR2Binding, type MediaEnv, type ProcessedMediaData } from './media.js';
+import { handleMediaFiles, processMediaFile, type MediaEnv, type ProcessedMediaData } from './media.js';
 import { generateResponse, handleError, extractXiaohongshuLink, extractDouyinLink, type ResponseData } from './utils.js';
 import { KV_CONFIG, IMAGE_HOST_CONFIG } from './config.js';
 import { imageHostService } from './imageHost.js';
@@ -527,7 +527,7 @@ router.get('/parse', async (request: Request, env: WorkerEnv, ctx: ExecutionCont
     ctx.waitUntil((async () => {
       try {
         console.log('开始处理媒体文件...');
-        const processedData = await handleMediaFiles(parsedData as any, env.MEDIA_BUCKET, env);
+        const processedData = await handleMediaFiles(parsedData as any, null, env);
         console.log('媒体文件处理完成，保存到缓存');
 
         // 保存到缓存
@@ -648,7 +648,7 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
 
         try {
           // 使用handleMediaFiles函数处理所有媒体文件
-          const processedData = await handleMediaFiles(parsedData, env.MEDIA_BUCKET, env);
+          const processedData = await handleMediaFiles(parsedData, null, env);
 
           // 更新parsedData为处理后的数据
           Object.assign(parsedData, processedData);
@@ -686,7 +686,11 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
     // 同步到 Notion
     console.log('开始同步到 Notion...');
     try {
-      const notionResponse = await syncToNotion(parsedData as ParsedData);
+      const notionResponse = await syncToNotion(parsedData as ParsedData, {
+        kv: env.CACHE_KV,
+        originalUrl: xhsUrl,
+        platform: '小红书'
+      });
       console.log('同步到Notion成功');
 
       // 视频已在同步处理中完成，无需异步处理
@@ -925,7 +929,7 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
 
         try {
           // 使用handleMediaFiles函数处理所有媒体文件
-          const processedData = await handleMediaFiles(parsedData, env.MEDIA_BUCKET, env);
+          const processedData = await handleMediaFiles(parsedData, null, env);
 
           // 更新parsedData为处理后的数据
           Object.assign(parsedData, processedData);
@@ -982,7 +986,11 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
     // 同步到 Notion
     console.log(`📝 [${new Date().toISOString()}] 开始同步到 Notion...`);
     try {
-      const notionResponse = await syncToNotion(parsedData as ParsedData);
+      const notionResponse = await syncToNotion(parsedData as ParsedData, {
+        kv: env.CACHE_KV,
+        originalUrl: extractedUrl,
+        platform: platform as '小红书' | '抖音'
+      });
 
       // 检查同步是否成功
       if (!notionResponse.success) {
@@ -1067,10 +1075,7 @@ router.all('*', (): Response => {
 export default {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     try {
-      // 初始化R2绑定
-      if (env.MEDIA_BUCKET) {
-        initR2Binding(env);
-      }
+      // R2绑定初始化已删除
 
       // 设置CORS头
       const corsHeaders = {

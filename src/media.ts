@@ -8,63 +8,26 @@
  */
 
 import { imageHostService, type ImageHostService } from './imageHost.js';
-import { R2_CONFIG, type R2Config } from './config.js';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { PROXY_CONFIG } from './config.js';
+import {
+  createProxyUrl,
+  shouldUseProxy,
+  detectPlatform,
+  formatFileSize as formatFileSizeProxy,
+  parseProxyUrl
+} from './proxyUrl.js';
 
 // ==================== 类型定义 ====================
 
 /** 环境变量接口 */
 export interface MediaEnv {
-  /** 媒体存储桶绑定 */
-  MEDIA_BUCKET?: R2Bucket;
   /** 图床用户名 */
   IMAGE_HOST_USERNAME?: string;
   /** 图床密码 */
   IMAGE_HOST_PASSWORD?: string;
 }
 
-/** R2存储桶接口 */
-export interface R2Bucket {
-  /** 上传文件到R2 */
-  put(key: string, data: ArrayBuffer | Uint8Array, options?: R2PutOptions): Promise<void>;
-  /** 从R2获取文件 */
-  get(key: string): Promise<R2Object | null>;
-  /** 删除R2文件 */
-  delete(key: string): Promise<void>;
-}
-
-/** R2上传选项接口 */
-export interface R2PutOptions {
-  /** HTTP元数据 */
-  httpMetadata?: {
-    contentType?: string;
-    cacheControl?: string;
-    contentDisposition?: string;
-    contentEncoding?: string;
-    contentLanguage?: string;
-    expires?: Date;
-  };
-  /** 自定义元数据 */
-  customMetadata?: Record<string, string>;
-}
-
-/** R2对象接口 */
-export interface R2Object {
-  /** 对象键 */
-  key: string;
-  /** 对象大小 */
-  size: number;
-  /** 最后修改时间 */
-  uploaded: Date;
-  /** HTTP元数据 */
-  httpMetadata: {
-    contentType?: string;
-  };
-  /** 获取对象体 */
-  arrayBuffer(): Promise<ArrayBuffer>;
-  /** 获取对象流 */
-  body: ReadableStream;
-}
+// R2相关类型定义已删除
 
 /** 媒体文件类型 */
 export type MediaFileType = 'video' | 'image' | 'audio' | 'unknown';
@@ -114,12 +77,12 @@ export interface ProcessedMediaData {
 export interface MediaProcessOptions {
   /** 文件大小阈值(字节) */
   fileSizeThreshold?: number;
-  /** 是否强制使用R2存储 */
-  forceR2?: boolean;
   /** 是否强制使用图床 */
   forceImageHost?: boolean;
   /** 超时时间(毫秒) */
   timeout?: number;
+  /** 是否是Live图视频（Live图视频不使用CDN代理，只上传到图床） */
+  isLivePhoto?: boolean;
 }
 
 /** 文件信息接口 */
@@ -136,8 +99,8 @@ export interface FileInfo {
 
 // ==================== 常量配置 ====================
 
-/** 文件大小阈值：19MB（字节） */
-const FILE_SIZE_THRESHOLD = 19 * 1024 * 1024;
+/** 文件大小阈值：100MB（字节） - 小于此大小的文件上传到图床，大于等于此大小的文件使用CDN代理 */
+const FILE_SIZE_THRESHOLD = 100 * 1024 * 1024;
 
 /** 支持的视频格式 */
 const VIDEO_FORMATS = new Set(['.mp4', '.webm', '.avi', '.mov', '.wmv', '.flv', '.mkv']);
@@ -165,36 +128,54 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
 
 // ==================== 全局变量 ====================
 
-/** R2存储绑定，通过initR2Binding函数初始化 */
-let r2Binding: R2Bucket | null = null;
-
-/** S3客户端，用于与R2交互 */
-const s3Client = new S3Client({
-  region: 'auto',
-  endpoint: R2_CONFIG.S3_API_URL,
-  credentials: {
-    accessKeyId: R2_CONFIG.ACCESS_KEY_ID,
-    secretAccessKey: R2_CONFIG.SECRET_ACCESS_KEY
-  },
-  forcePathStyle: true // 使用路径样式而不是虚拟主机样式
-});
+// R2存储功能已删除
 
 // ==================== 初始化函数 ====================
+// R2存储初始化函数已删除
+
+// ==================== 工具函数 ====================
 
 /**
- * 初始化R2存储绑定
- * @param env - Worker环境变量
+ * 检查URL是否已经被处理（包括代理URL、图床URL）
+ * @param url - 要检查的URL
+ * @returns 是否已处理
  */
-export function initR2Binding(env: MediaEnv): void {
-  if (env?.MEDIA_BUCKET) {
-    r2Binding = env.MEDIA_BUCKET;
-    console.log('R2存储绑定初始化成功');
-  } else {
-    console.warn('未找到R2存储绑定，某些功能可能不可用');
+function isProcessedUrl(url: string): boolean {
+  try {
+    // 检查是否是代理URL
+    const proxyMetadata = parseProxyUrl(url);
+    if (proxyMetadata) {
+      return true;
+    }
+
+    // 检查是否是图床URL
+    if (url.includes('tg-image.oox-20b.workers.dev')) {
+      return true;
+    }
+
+    // 检查是否是代理Worker URL
+    if (url.includes(PROXY_CONFIG.WORKER_URL)) {
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    return false;
   }
 }
 
-// ==================== 工具函数 ====================
+/**
+ * 检查URL是否是原始平台链接
+ * @param url - 要检查的URL
+ * @returns 是否是原始链接
+ */
+function isOriginalPlatformUrl(url: string): boolean {
+  return url.includes('xhscdn.com') ||
+         url.includes('douyin.com') ||
+         url.includes('aweme.snssdk.com') ||
+         url.includes('zjcdn.com') ||
+         url.includes('bytecdn.com');
+}
 
 /**
  * 格式化文件大小
@@ -305,22 +286,12 @@ function getFileType(fileName: string): MediaFileType {
  */
 function extractVideoId(url: string): string | null {
   try {
-    // 尝试从URL中提取视频ID
-    const urlObj = new URL(url);
-    const pathname = urlObj.pathname;
-    
-    // 检查是否是R2 URL
-    if (pathname.includes('/videos/')) {
-      const parts = pathname.split('/');
-      return parts[parts.length - 1].replace(/\.\w+$/, ''); // 移除文件扩展名
-    }
-    
     // 检查是否是抖音URL
     if (url.includes('douyin.com')) {
       const match = url.match(/\/(\w+)\/$/);
       return match ? `douyin_${match[1]}` : null;
     }
-    
+
     return null;
   } catch (e) {
     return null;
@@ -329,42 +300,125 @@ function extractVideoId(url: string): string | null {
 
 // ==================== 核心处理函数 ====================
 
+// uploadToR2函数已删除
+
+// uploadLargeFileToR2Stream函数已删除
+
 /**
- * 上传数据到R2存储
- * @param data - 数据
- * @param fileName - 文件名
- * @param contentType - 内容类型
- * @returns 上传后的URL
+ * 处理带有解析数据的媒体文件（支持备用URL）
+ * @param url - 媒体文件URL
+ * @param mediaBucket - 已废弃参数，保留为null
+ * @param key - 存储键
+ * @param options - 处理选项
+ * @param parseData - 解析数据（用于提取备用URL）
+ * @returns 处理后的URL
  */
-async function uploadToR2(data: ArrayBuffer | Uint8Array, fileName: string, contentType: string): Promise<string> {
+export async function processMediaFileWithParseData(
+  url: string,
+  mediaBucket: any,
+  key: string,
+  options: MediaProcessOptions = {},
+  parseData?: any
+): Promise<string> {
+  const {
+    fileSizeThreshold = FILE_SIZE_THRESHOLD,
+    forceImageHost = false,
+    timeout = 60000,
+    isLivePhoto = false
+  } = options;
+
   try {
-    if (!r2Binding) {
-      throw new Error('R2存储未初始化');
+    console.log(`🎬 处理媒体文件: ${url}`);
+
+    // 获取文件大小
+    let fileSize = 0;
+    try {
+      const headResponse = await fetch(url, {
+        method: 'HEAD',
+        signal: AbortSignal.timeout(timeout)
+      });
+
+      if (headResponse.ok) {
+        const headContentLength = headResponse.headers.get('content-length');
+        fileSize = headContentLength ? parseInt(headContentLength, 10) : 0;
+        console.log(`HEAD请求获取文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
+      }
+    } catch (headError) {
+      console.warn('HEAD请求失败，继续使用原始响应:', headError instanceof Error ? headError.message : String(headError));
     }
 
-    console.log(`上传文件到R2: ${fileName}, 类型: ${contentType}, 大小: ${formatFileSize(data.byteLength)}`);
+    console.log(`视频文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
 
-    // 上传到R2
-    await r2Binding.put(fileName, data, {
-      httpMetadata: {
-        contentType: contentType
+    if (fileSize === 0) {
+      console.warn(`文件大小未知，无法确定处理方式`);
+      throw new Error(`无法获取文件大小，无法确定处理方式`);
+    }
+
+    // 简化的文件大小处理逻辑：只有图床和CDN代理两种方式
+    if (fileSize >= fileSizeThreshold) {
+      console.log(`🚀 文件大小 ${formatFileSize(fileSize)} 超过${formatFileSize(fileSizeThreshold)}，检查CDN代理方案`);
+
+      // Live图视频不使用CDN代理，只上传到图床
+      if (isLivePhoto) {
+        console.log(`📸 Live图视频不使用CDN代理，强制上传到图床`);
+      } else {
+        // 检测平台并判断是否支持CDN代理
+        const platformInfo = detectPlatform(url);
+        const shouldProxy = shouldUseProxy(fileSize, platformInfo.platform);
+
+        if (shouldProxy && platformInfo.supportsProxy) {
+          console.log(`✅ 使用CDN代理方案: ${platformInfo.platform} 平台，文件大小 ${formatFileSize(fileSize)}`);
+
+          try {
+            // 创建代理URL，传递解析数据以提取备用URL
+            const proxyUrl = createProxyUrl(url, parseData);
+            console.log(`🔗 CDN代理URL生成成功: ${proxyUrl.substring(0, 100)}...`);
+            return proxyUrl;
+          } catch (proxyError) {
+            console.error(`CDN代理URL生成失败: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`);
+            throw new Error(`CDN代理URL生成失败: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`);
+          }
+        } else {
+          console.log(`❌ 不支持CDN代理: 平台=${platformInfo.platform}, 支持代理=${platformInfo.supportsProxy}, 应该使用代理=${shouldProxy}`);
+          console.log(`⚠️ 大文件无法使用CDN代理，返回原始URL: ${url}`);
+          return url;
+        }
+      }
+    }
+
+    // 常规处理流程（小于110MB的文件或Live图视频）
+    console.log(`📥 文件小于${formatFileSize(fileSizeThreshold)}或为Live图视频，上传到图床`);
+
+    // 获取文件内容
+    const response = await fetch(url, {
+      headers: {
+        'Referer': url.includes('douyin.com') ? 'https://www.douyin.com/' : 'https://www.xiaohongshu.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       }
     });
 
-    // 构建公共访问URL - 使用配置中的PUBLIC_URL
-    const publicUrl = `${R2_CONFIG.PUBLIC_URL}/${fileName}`;
-    console.log(`文件上传成功: ${publicUrl}`);
+    if (!response.ok) {
+      throw new Error(`获取文件失败: ${response.status} ${response.statusText}`);
+    }
 
-    return publicUrl;
+    const buffer = await response.arrayBuffer();
+    const contentType = response.headers.get('content-type') || 'video/mp4';
+    const fileExtension = getFileExtension(url);
+    const fileName = `${key}${fileExtension}`;
+
+    // 直接上传到图床
+    console.log(`上传到图床: ${fileName} (${formatFileSize(buffer.byteLength)})`);
+    return await imageHostService.uploadFile(buffer, fileName, contentType);
+
   } catch (error) {
-    console.error(`上传到R2失败: ${error instanceof Error ? error.message : String(error)}`);
-    throw error;
+    console.error(`处理媒体文件失败: ${url}`, error instanceof Error ? error.message : String(error));
+    throw new Error(`处理媒体文件失败: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
 /**
  * 处理单个媒体文件
- * 根据文件大小选择上传到图床或R2存储
+ * 根据文件大小选择上传到图床或使用CDN代理
  * @param url - 媒体文件URL或者已缓存的文件内容
  * @param mediaBucket - 已废弃参数，保留为null
  * @param key - 存储键
@@ -379,51 +433,75 @@ export async function processMediaFile(
 ): Promise<string> {
   const {
     fileSizeThreshold = FILE_SIZE_THRESHOLD,
-    forceR2 = false,
     forceImageHost = false,
-    timeout = 60000
+    timeout = 60000,
+    isLivePhoto = false
   } = options;
 
-  // 如果输入是ArrayBuffer或Uint8Array，直接使用
+  // 如果输入是ArrayBuffer或Uint8Array，直接上传到图床
   if (typeof url !== 'string') {
     console.log(`使用已缓存的媒体文件数据, 大小: ${url.byteLength} 字节`);
     const contentType = 'video/mp4'; // 默认视频类型
     const fileName = `${key}.mp4`;
 
-    try {
-      // 根据配置选择存储方式
-      if (forceImageHost || (!forceR2 && url.byteLength < fileSizeThreshold)) {
-        console.log(`文件小于${formatFileSize(fileSizeThreshold)}，上传到图床: ${fileName} (${formatFileSize(url.byteLength)})`);
-        try {
-          return await imageHostService.uploadFile(url, fileName, contentType);
-        } catch (imageHostError) {
-          console.error(`图床上传失败，尝试R2存储: ${imageHostError instanceof Error ? imageHostError.message : String(imageHostError)}`);
-          // 如果图床上传失败，尝试上传到R2作为备选方案
-          try {
-            const r2Url = await uploadToR2(url, fileName, contentType);
-            console.log(`R2备选上传成功: ${r2Url}`);
-            return r2Url;
-          } catch (r2Error) {
-            console.error(`R2备选上传也失败: ${r2Error instanceof Error ? r2Error.message : String(r2Error)}`);
-            throw new Error(`所有上传方式都失败: 图床(${imageHostError instanceof Error ? imageHostError.message : String(imageHostError)}), R2(${r2Error instanceof Error ? r2Error.message : String(r2Error)})`);
-          }
-        }
-      } else {
-        console.log(`文件大于等于${formatFileSize(fileSizeThreshold)}，上传到R2存储: ${fileName} (${formatFileSize(url.byteLength)})`);
-        const r2Url = await uploadToR2(url, fileName, contentType);
-        console.log(`上传到R2成功: ${r2Url}`);
-        return r2Url;
-      }
-    } catch (error) {
-      console.error('上传文件失败:', error);
-      throw error;
-    }
+    console.log(`上传到图床: ${fileName} (${formatFileSize(url.byteLength)})`);
+    return await imageHostService.uploadFile(url, fileName, contentType);
   }
 
   // 处理URL情况
   try {
     console.log(`处理媒体文件: ${url}`);
 
+    // Live图视频跳过文件大小检测，直接上传到图床
+    if (isLivePhoto) {
+      console.log(`📸 Live图视频跳过文件大小检测，直接上传到图床`);
+
+      // 判断是否是抖音视频
+      const isDouyinVideo = url.includes('douyin.com') ||
+                           url.includes('aweme.snssdk.com') ||
+                           url.includes('bytecdn.com') ||
+                           url.includes('365yg.com') ||
+                           url.includes('zjcdn.com') ||  // 抖音Live图CDN
+                           url.includes('dy-o.zjcdn.com'); // 抖音视频CDN
+
+      // 构建简化的请求头
+      const headers: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': isDouyinVideo ? 'https://www.douyin.com/' : 'https://www.xiaohongshu.com/'
+      };
+
+      // 直接获取文件内容，不检测大小
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: 'GET',
+          headers: headers,
+          signal: controller.signal
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      if (!response.ok) {
+        throw new Error(`获取Live图视频数据失败: ${response.status} ${response.statusText}`);
+      }
+
+      // 获取文件内容并直接上传
+      const buffer = await response.arrayBuffer();
+      console.log(`Live图视频数据获取完成，大小: ${buffer.byteLength} 字节`);
+
+      const contentType = response.headers.get('content-type') || 'video/mp4';
+      const fileExtension = contentType.includes('video') ? '.mp4' : '.jpg';
+      const fileName = `${key}${fileExtension}`;
+
+      console.log(`上传Live图视频到图床: ${fileName} (${formatFileSize(buffer.byteLength)})`);
+      return await imageHostService.uploadFile(buffer, fileName, contentType);
+    }
+
+    // 非Live图视频的正常处理流程
     // 判断是否是抖音视频
     const isDouyinVideo = url.includes('douyin.com') ||
                          url.includes('aweme.snssdk.com') ||
@@ -476,22 +554,64 @@ export async function processMediaFile(
     console.log(`视频类型: ${contentType}`);
 
     // 检查文件大小，避免内存溢出
-    const contentLength = response.headers.get('content-length');
-    const fileSize = contentLength ? parseInt(contentLength, 10) : 0;
+    let contentLength = response.headers.get('content-length');
+    let fileSize = contentLength ? parseInt(contentLength, 10) : 0;
+
+    // 如果第一次请求没有Content-Length（可能是重定向），尝试HEAD请求获取真实大小
+    if (fileSize === 0) {
+      console.log('第一次请求未获取到文件大小，尝试HEAD请求...');
+      try {
+        const headResponse = await fetch(url, {
+          method: 'HEAD',
+          headers: headers
+        });
+
+        if (headResponse.ok) {
+          const headContentLength = headResponse.headers.get('content-length');
+          fileSize = headContentLength ? parseInt(headContentLength, 10) : 0;
+          console.log(`HEAD请求获取文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
+        }
+      } catch (headError) {
+        console.warn('HEAD请求失败，继续使用原始响应:', headError instanceof Error ? headError.message : String(headError));
+      }
+    }
 
     console.log(`视频文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
 
-    // 如果文件过大（超过110MB），跳过处理
-    const MAX_FILE_SIZE = 110 * 1024 * 1024; // 110MB
-    if (fileSize > MAX_FILE_SIZE) {
-      console.warn(`文件过大 (${formatFileSize(fileSize)})，跳过处理，返回原始链接`);
-      return url; // 返回原始链接而不是处理后的链接
+    if (fileSize === 0) {
+      console.warn(`文件大小未知，无法确定处理方式`);
+      throw new Error(`无法获取文件大小，无法确定处理方式`);
     }
 
-    // 如果文件大小未知或过大，也跳过处理
-    if (fileSize === 0 || fileSize > MAX_FILE_SIZE) {
-      console.warn(`文件大小未知或过大，跳过处理，返回原始链接`);
-      return url;
+    // 简化的文件大小处理逻辑：只有图床和CDN代理两种方式
+    if (fileSize >= fileSizeThreshold) {
+      console.log(`🚀 文件大小 ${formatFileSize(fileSize)} 超过${formatFileSize(fileSizeThreshold)}，检查CDN代理方案`);
+
+      // Live图视频不使用CDN代理，只上传到图床
+      if (isLivePhoto) {
+        console.log(`📸 Live图视频不使用CDN代理，强制上传到图床`);
+      } else {
+        // 检测平台并判断是否支持CDN代理
+        const platformInfo = detectPlatform(url);
+        const shouldProxy = shouldUseProxy(fileSize, platformInfo.platform);
+
+        if (shouldProxy && platformInfo.supportsProxy) {
+          console.log(`✅ 使用CDN代理方案: ${platformInfo.platform} 平台，文件大小 ${formatFileSize(fileSize)}`);
+
+          try {
+            // 创建代理URL（在processMediaFile中没有parseData，所以不传递）
+            const proxyUrl = createProxyUrl(url);
+            console.log(`🔗 CDN代理URL生成成功: ${proxyUrl.substring(0, 100)}...`);
+            return proxyUrl;
+          } catch (proxyError) {
+            console.error(`CDN代理URL生成失败: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`);
+            throw new Error(`CDN代理URL生成失败: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`);
+          }
+        } else {
+          console.log(`❌ 不支持CDN代理: 平台=${platformInfo.platform}, 支持代理=${platformInfo.supportsProxy}, 应该使用代理=${shouldProxy}`);
+          throw new Error(`文件大小${formatFileSize(fileSize)}超过${formatFileSize(fileSizeThreshold)}，但平台${platformInfo.platform}不支持CDN代理，无法处理此文件`);
+        }
+      }
     }
 
     // 获取媒体数据
@@ -530,29 +650,9 @@ export async function processMediaFile(
     // 生成唯一的文件名
     const fileName = `${key}${fileExtension}`;
 
-    // 根据配置选择存储方式
-    if (forceImageHost || (!forceR2 && processedBuffer.byteLength < fileSizeThreshold)) {
-      console.log(`文件小于${formatFileSize(fileSizeThreshold)}，上传到图床: ${fileName} (${formatFileSize(processedBuffer.byteLength)})`);
-      try {
-        return await imageHostService.uploadFile(processedBuffer, fileName, finalContentType);
-      } catch (imageHostError) {
-        console.error(`图床上传失败，尝试R2存储: ${imageHostError instanceof Error ? imageHostError.message : String(imageHostError)}`);
-        // 如果图床上传失败，尝试上传到R2作为备选方案
-        try {
-          const r2Url = await uploadToR2(processedBuffer, fileName, finalContentType);
-          console.log(`R2备选上传成功: ${r2Url}`);
-          return r2Url;
-        } catch (r2Error) {
-          console.error(`R2备选上传也失败: ${r2Error instanceof Error ? r2Error.message : String(r2Error)}`);
-          throw new Error(`所有上传方式都失败: 图床(${imageHostError instanceof Error ? imageHostError.message : String(imageHostError)}), R2(${r2Error instanceof Error ? r2Error.message : String(r2Error)})`);
-        }
-      }
-    } else {
-      console.log(`文件大于等于${formatFileSize(fileSizeThreshold)}，上传到R2存储: ${fileName} (${formatFileSize(processedBuffer.byteLength)})`);
-      const r2Url = await uploadToR2(processedBuffer, fileName, finalContentType);
-      console.log(`上传到R2成功: ${r2Url}`);
-      return r2Url;
-    }
+    // 直接上传到图床（简化逻辑）
+    console.log(`上传到图床: ${fileName} (${formatFileSize(processedBuffer.byteLength)})`);
+    return await imageHostService.uploadFile(processedBuffer, fileName, finalContentType);
   } catch (error) {
     console.error(`处理媒体文件失败: ${url}`, error instanceof Error ? error.message : String(error));
     throw new Error(`处理媒体文件失败: ${error instanceof Error ? error.message : String(error)}`);
@@ -562,7 +662,7 @@ export async function processMediaFile(
 /**
  * 处理解析数据中的所有媒体文件
  * @param parsedData - 解析的数据
- * @param mediaBucket - R2存储桶对象（已废弃）
+ * @param mediaBucket - 已废弃参数，保留为null
  * @param env - 环境变量
  * @param options - 处理选项
  * @returns 处理后的数据
@@ -607,21 +707,19 @@ export async function handleMediaFiles(
 
     // 处理视频 - 允许跳过处理（文件过大时）
     if (processedData.video) {
-      console.log(`处理视频: ${processedData.video}`);
-      const videoKey = `videos/${processedData._raw?.id || `video_${Date.now()}`}`;
-      const processedVideoUrl = await processMediaFile(processedData.video, mediaBucket, videoKey, options);
+      // 检查是否为Live图内容，如果是则跳过主视频处理（主视频会在Live图视频中处理）
+      const isLivePhotoContent = processedData.videos && Array.isArray(processedData.videos) && processedData.videos.length > 1;
 
-      // 检查是否成功处理（如果返回原始链接，说明跳过了处理）
-      if (processedVideoUrl === processedData.video ||
-          processedVideoUrl.includes('xhscdn.com') ||
-          processedVideoUrl.includes('douyin.com') ||
-          processedVideoUrl.includes('aweme.snssdk.com')) {
-        console.warn(`视频文件跳过处理（可能因文件过大），使用原始链接: ${processedVideoUrl}`);
-        // 不抛出错误，而是使用原始链接
-        processedData.video_download_url = processedVideoUrl;
-        processedData.video = processedVideoUrl;
+      if (isLivePhotoContent) {
+        console.log(`📸 检测到Live图内容，跳过主视频处理（主视频将在Live图视频中处理）`);
+        // 将主视频URL设置为第一个Live图视频的处理结果（稍后会被替换）
+        processedData.video_download_url = processedData.video;
       } else {
-        // 成功处理的情况
+        console.log(`处理视频: ${processedData.video}`);
+        const videoKey = `videos/${processedData._raw?.id || `video_${Date.now()}`}`;
+        const processedVideoUrl = await processMediaFileWithParseData(processedData.video, mediaBucket, videoKey, options, processedData);
+
+        // 成功处理的情况（包括代理URL）
         processedData.video_download_url = processedVideoUrl;
         processedData.video = processedData.video_download_url;
         console.log(`视频处理完成: ${processedData.video}`);
@@ -653,16 +751,8 @@ export async function handleMediaFiles(
                 console.log(`处理Live图视频 ${globalIndex + 1}/${videoCount}: ${videoUrl}`);
                 const videoKey = `videos/${processedData._raw?.id || Date.now()}_live_${globalIndex}`;
 
-                const processedVideoUrl = await processMediaFile(videoUrl, mediaBucket, videoKey, options);
-
-                // 检查是否成功处理（如果返回原始链接，说明跳过了处理）
-                if (processedVideoUrl === videoUrl ||
-                    processedVideoUrl.includes('xhscdn.com') ||
-                    processedVideoUrl.includes('douyin.com') ||
-                    processedVideoUrl.includes('aweme.snssdk.com')) {
-                  console.warn(`Live图视频 ${globalIndex + 1} 跳过处理（可能因文件过大），使用原始链接: ${processedVideoUrl}`);
-                  return processedVideoUrl;
-                }
+                const livePhotoOptions = { ...options, isLivePhoto: true };
+                const processedVideoUrl = await processMediaFile(videoUrl, mediaBucket, videoKey, livePhotoOptions);
 
                 console.log(`Live图视频 ${globalIndex + 1} 处理完成: ${processedVideoUrl}`);
                 return processedVideoUrl;
@@ -686,16 +776,8 @@ export async function handleMediaFiles(
               console.log(`处理Live图视频 ${index + 1}/${processedData.videos!.length}: ${videoUrl}`);
               const videoKey = `videos/${processedData._raw?.id || Date.now()}_live_${index}`;
 
-              const processedVideoUrl = await processMediaFile(videoUrl, mediaBucket, videoKey, options);
-
-              // 检查是否成功处理（如果返回原始链接，说明跳过了处理）
-              if (processedVideoUrl === videoUrl ||
-                  processedVideoUrl.includes('xhscdn.com') ||
-                  processedVideoUrl.includes('douyin.com') ||
-                  processedVideoUrl.includes('aweme.snssdk.com')) {
-                console.warn(`Live图视频 ${index + 1} 跳过处理（可能因文件过大），使用原始链接: ${processedVideoUrl}`);
-                return processedVideoUrl;
-              }
+              const livePhotoOptions = { ...options, isLivePhoto: true };
+              const processedVideoUrl = await processMediaFile(videoUrl, mediaBucket, videoKey, livePhotoOptions);
 
               console.log(`Live图视频 ${index + 1} 处理完成: ${processedVideoUrl}`);
               return processedVideoUrl;
@@ -707,16 +789,14 @@ export async function handleMediaFiles(
 
         console.log(`📸 Live图多视频处理完成: ${processedData.videos.length} 个视频`);
 
-        // 如果主视频URL还是原始链接，使用第一个处理后的视频
-        if (processedData.video && (
-            processedData.video.includes('xhscdn.com') ||
-            processedData.video.includes('douyin.com') ||
-            processedData.video.includes('aweme.snssdk.com')
-        )) {
+        // 将第一个Live图视频设置为主视频
+        if (processedData.videos.length > 0) {
           processedData.video = processedData.videos[0];
           processedData.video_download_url = processedData.videos[0];
-          console.log(`📸 Live图主视频已更新为处理后的URL: ${processedData.video}`);
+          console.log(`📸 Live图主视频设置为第一个视频: ${processedData.video}`);
         }
+
+        console.log(`📸 Live图多视频处理完成，主视频: ${processedData.video}`);
 
       } catch (error) {
         console.error('处理Live图多视频失败:', error);
@@ -932,9 +1012,9 @@ export class MediaProcessor {
   constructor(options: MediaProcessOptions = {}, env: MediaEnv | null = null) {
     this.options = {
       fileSizeThreshold: options.fileSizeThreshold ?? FILE_SIZE_THRESHOLD,
-      forceR2: options.forceR2 ?? false,
       forceImageHost: options.forceImageHost ?? false,
-      timeout: options.timeout ?? 30000
+      timeout: options.timeout ?? 30000,
+      isLivePhoto: options.isLivePhoto ?? false
     };
     this.env = env;
 

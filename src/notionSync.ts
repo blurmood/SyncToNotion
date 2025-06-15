@@ -105,6 +105,10 @@ export interface NotionPageProperties {
     url?: string | null;
     multi_select?: Array<{ name: string }>;
     files?: Array<NotionFile>;
+    date?: {
+      start: string;
+      end?: string;
+    };
   };
 }
 
@@ -177,6 +181,14 @@ export interface NotionApiResponse {
   [key: string]: any;
 }
 
+/** KV命名空间接口 */
+interface KVNamespace {
+  get(key: string, options?: { type?: 'text' | 'json' | 'arrayBuffer' | 'stream' }): Promise<any>;
+  put(key: string, value: string | ArrayBuffer | ReadableStream, options?: { expirationTtl?: number }): Promise<void>;
+  delete(key: string): Promise<void>;
+  list(options?: { prefix?: string; limit?: number; cursor?: string }): Promise<any>;
+}
+
 /** 同步选项接口 */
 export interface SyncOptions {
   /** 强制使用特定数据库 */
@@ -187,6 +199,12 @@ export interface SyncOptions {
   skipCover?: boolean;
   /** 自定义标签 */
   customTags?: string[];
+  /** KV存储实例（用于页面-文件关联） */
+  kv?: KVNamespace;
+  /** 原始链接（用于页面-文件关联） */
+  originalUrl?: string;
+  /** 平台类型（用于页面-文件关联） */
+  platform?: '小红书' | '抖音';
 }
 
 /** 同步结果接口 */
@@ -538,8 +556,15 @@ export async function syncToNotion(
           const videoDownloadUrl = parsedData.video_download_url || parsedData.video;
           console.log(`🎬 单个视频URL: ${videoDownloadUrl}`);
 
-          videoUrls.push(videoDownloadUrl);
-          mediaCount.videos = 1;
+          // 检查视频URL是否有效
+          if (!videoDownloadUrl || videoDownloadUrl === 'undefined' || typeof videoDownloadUrl !== 'string') {
+            console.error('❌ 页面属性：视频URL无效，跳过添加到页面属性:', videoDownloadUrl);
+            console.error('❌ parsedData.video_download_url:', parsedData.video_download_url);
+            console.error('❌ parsedData.video:', parsedData.video);
+          } else {
+            videoUrls.push(videoDownloadUrl);
+            mediaCount.videos = 1;
+          }
         }
 
         console.log(`🔍 最终视频URL数组:`, videoUrls);
@@ -598,6 +623,10 @@ function createPageProperties(
   tags: string[],
   contentType: ContentType
 ): NotionPageProperties {
+  // 获取当前时间作为创建时间
+  const now = new Date();
+  const createTime = now.toISOString();
+
   const properties: NotionPageProperties = {
     // 标题属性
     "标题": {
@@ -624,6 +653,12 @@ function createPageProperties(
           }
         }
       ]
+    },
+    // 创建时间属性 - 记录同步到Notion的时间
+    "创建时间": {
+      date: {
+        start: createTime
+      }
     }
   };
 
@@ -765,16 +800,23 @@ function createPageBlocks(parsedData: ParsedData, contentType: ContentType): Not
       // 单个视频的处理逻辑（包括被错误识别为多视频的普通视频笔记）
       const finalVideoUrl = parsedData.video_download_url || parsedData.video;
 
-      // 视频链接应该已经是处理后的图床链接
-      console.log('🎬 页面内容：使用处理后的视频链接同步到Notion:', finalVideoUrl);
-
-      // 创建视频嵌入块（视频笔记只需要嵌入块，不需要额外的链接）
-      const videoBlock = createVideoBlock(finalVideoUrl);
-      if (videoBlock) {
-        children.push(videoBlock);
-        console.log('✅ 页面内容：视频笔记已添加视频嵌入块');
+      // 检查视频URL是否有效
+      if (!finalVideoUrl || finalVideoUrl === 'undefined' || typeof finalVideoUrl !== 'string') {
+        console.error('❌ 页面内容：视频URL无效，跳过视频块创建:', finalVideoUrl);
+        console.error('❌ parsedData.video_download_url:', parsedData.video_download_url);
+        console.error('❌ parsedData.video:', parsedData.video);
       } else {
-        console.log('❌ 页面内容：视频笔记视频嵌入块创建失败');
+        // 视频链接应该已经是处理后的图床链接
+        console.log('🎬 页面内容：使用处理后的视频链接同步到Notion:', finalVideoUrl);
+
+        // 创建视频嵌入块（视频笔记只需要嵌入块，不需要额外的链接）
+        const videoBlock = createVideoBlock(finalVideoUrl);
+        if (videoBlock) {
+          children.push(videoBlock);
+          console.log('✅ 页面内容：视频笔记已添加视频嵌入块');
+        } else {
+          console.log('❌ 页面内容：视频笔记视频嵌入块创建失败');
+        }
       }
     }
   } else if (parsedData.video_processing) {
@@ -813,6 +855,12 @@ function createVideoBlock(videoUrl: string): NotionVideoBlock | null {
   console.log('创建视频块:', videoUrl);
 
   try {
+    // 检查URL是否有效
+    if (!videoUrl || videoUrl === 'undefined' || typeof videoUrl !== 'string') {
+      console.error('❌ 视频URL无效:', videoUrl);
+      return null;
+    }
+
     // 检查URL是否以.mp4结尾，如果不是，强制添加.mp4扩展名
     let processedUrl = videoUrl;
     if (!processedUrl.toLowerCase().endsWith('.mp4')) {

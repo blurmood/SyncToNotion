@@ -1,0 +1,28 @@
+{
+  "name": "media-proxy-worker",
+  "version": "1.0.0",
+  "description": "CDN代理Worker，支持小红书和抖音视频流式传输",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:prod": "wrangler deploy --env production",
+    "tail": "wrangler tail",
+    "build": "wrangler deploy --dry-run"
+  },
+  "keywords": [
+    "cloudflare",
+    "worker",
+    "cdn",
+    "proxy",
+    "video",
+    "streaming"
+  ],
+  "author": "Augment Agent",
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240614.0",
+    "typescript": "^5.0.0",
+    "wrangler": "^3.0.0"
+  }
+}
