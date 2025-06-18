@@ -296,7 +296,6 @@ function extractAuthor(html: string): string {
     if (match?.[1]) {
       const author = cleanText(match[1]);
       if (author) {
-        debugLog(`提取到作者: ${author}`);
         return author;
       }
     }
@@ -318,7 +317,6 @@ function extractContent(html: string): string {
         .replace(/\\t/g, '\t')
         .replace(/\\"/g, '"');
       if (content) {
-        debugLog(`提取到正文: ${content.substring(0, 50)}...`);
         return content;
       }
     }
@@ -419,7 +417,6 @@ function extractAllJsonData(html: string): {
   };
 
   // 提取meta标签
-  debugLog('🏷️ 提取meta标签...');
   const metaMatches = html.match(/<meta[^>]+>/g) || [];
   metaMatches.forEach(meta => {
     const nameMatch = meta.match(/name=["']([^"']+)["']/);
@@ -433,7 +430,6 @@ function extractAllJsonData(html: string): {
   });
 
   // 提取script中的JSON数据
-  debugLog('📊 提取script中的JSON数据...');
   const scriptMatches = html.match(/<script[^>]*>(.*?)<\/script>/gs) || [];
 
   scriptMatches.forEach((script, scriptIndex) => {
@@ -469,7 +465,7 @@ function extractAllJsonData(html: string): {
                   scriptIndex,
                   jsonIndex
                 });
-                debugLog(`📸 找到WB_DFT图片: ${parsed.url}`);
+
               } else if (parsed.imageScene === 'WB_PRV') {
                 result.livePhotoData.wbPrvImages.push({
                   url: parsed.url,
@@ -477,7 +473,7 @@ function extractAllJsonData(html: string): {
                   scriptIndex,
                   jsonIndex
                 });
-                debugLog(`📸 找到WB_PRV图片: ${parsed.url}`);
+
               }
             }
           }
@@ -656,13 +652,12 @@ async function fetchWithRetry(url: string, options: FetchOptions = {}): Promise<
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      debugLog(`第${attempt + 1}次尝试请求: ${url}`);
+
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), timeout);
 
       const userAgent = getDesktopUserAgent();
-      debugLog(`使用桌面端User-Agent: ${userAgent}`);
 
       const response = await fetch(url, {
         method: 'GET',
@@ -682,16 +677,13 @@ async function fetchWithRetry(url: string, options: FetchOptions = {}): Promise<
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      debugLog(`请求成功: ${response.status} ${response.statusText}`);
       return response;
 
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      debugLog(`请求失败: ${lastError.message}`);
 
       if (attempt < maxRetries) {
         const waitTime = retryDelay * (attempt + 1);
-        debugLog(`等待${waitTime}ms后重试...`);
         await delay(waitTime);
       }
     }
@@ -713,12 +705,9 @@ export async function parseXiaohongshuLink(
   options: XiaohongshuParserConfig = {}
 ): Promise<XiaohongshuParseResult> {
   try {
-    debugLog(`开始解析链接: ${url}`, true);
-
     // 合并配置
     const config = {
-      network: { ...DEFAULT_CONFIG.network, ...options.network },
-      debug: { ...DEFAULT_CONFIG.debug, ...options.debug }
+      network: { ...DEFAULT_CONFIG.network, ...options.network }
     };
 
     // 更新全局配置
@@ -727,8 +716,6 @@ export async function parseXiaohongshuLink(
     // 发送请求获取页面内容
     const response = await fetchWithRetry(url, config.network);
     const html = await response.text();
-
-    debugLog(`获取到HTML内容: ${html.length} 字节`);
 
     // 检查是否包含错误信息
     if (html.includes('internal error') || html.includes('验证码') || html.includes('captcha')) {
