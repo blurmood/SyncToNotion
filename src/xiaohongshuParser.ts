@@ -20,18 +20,10 @@ export interface NetworkConfig {
   retryDelay: number;
 }
 
-/** 调试配置接口 */
-export interface DebugConfig {
-  /** 是否启用详细日志 */
-  verbose: boolean;
-}
-
 /** 解析器配置接口 */
 export interface XiaohongshuParserConfig {
   /** 网络请求配置 */
   network?: Partial<NetworkConfig>;
-  /** 调试配置 */
-  debug?: Partial<DebugConfig>;
 }
 
 /** 作者信息接口 */
@@ -162,9 +154,6 @@ const DEFAULT_CONFIG = {
     timeout: 15000,
     maxRetries: 3,
     retryDelay: 1000
-  },
-  debug: {
-    verbose: false
   }
 };
 
@@ -274,16 +263,7 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/**
- * 调试日志
- * @param message - 日志消息
- * @param force - 是否强制输出
- */
-function debugLog(message: string, force: boolean = false): void {
-  if (DEFAULT_CONFIG.debug.verbose || force) {
-    console.log(`[XHS Parser] ${message}`);
-  }
-}
+
 
 // ==================== 内容提取函数 ====================
 
@@ -298,7 +278,6 @@ function extractTitle(html: string): string {
     if (match?.[1]) {
       const title = cleanText(match[1]);
       if (title && title !== '小红书') {
-        debugLog(`提取到标题: ${title}`);
         return title;
       }
     }
@@ -389,47 +368,25 @@ function extractImages(html: string): string[] {
   // 尝试所有正则表达式模式
   for (let patternIndex = 0; patternIndex < ogImagePatterns.length; patternIndex++) {
     const pattern = ogImagePatterns[patternIndex];
-    console.log(`📋 尝试模式${patternIndex + 1}...`);
 
     let match;
-    let matchCount = 0;
     while ((match = pattern.exec(html)) !== null) {
-      matchCount++;
       totalMatchCount++;
       const url = cleanUrl(match[1]);
-      const fullMatch = match[0];
-
-      console.log(`📋 模式${patternIndex + 1}匹配${matchCount}: ${fullMatch.substring(0, 100)}...`);
-      console.log(`📋 提取URL: ${url}`);
 
       if (url && url.includes('http') && !images.includes(url)) {
         images.push(url);
-        console.log(`✅ 添加到结果: ${url}`);
-      } else {
-        console.log(`❌ 跳过无效或重复URL: ${url}`);
       }
-      console.log('---');
     }
 
     // 重置正则表达式的lastIndex
     pattern.lastIndex = 0;
 
-    console.log(`📋 模式${patternIndex + 1}找到 ${matchCount} 个匹配`);
-
     // 如果已经找到图片，就停止尝试其他模式
     if (images.length > 0) {
-      console.log(`✅ 已找到图片，停止尝试其他模式`);
       break;
     }
   }
-
-  console.log(`📊 所有正则表达式总共匹配到 ${totalMatchCount} 个结果`);
-  console.log(`📊 最终提取到 ${images.length} 张有效图片`);
-
-  // 显示所有提取的图片URL
-  images.forEach((img, index) => {
-    console.log(`📸 图片${index + 1}: ${img}`);
-  });
 
   return images;
 }
@@ -502,7 +459,6 @@ function extractAllJsonData(html: string): {
                   scriptIndex,
                   jsonIndex
                 });
-                debugLog(`📹 找到视频: ${videoData.masterUrl}`);
               }
             } else if (parsed.imageScene && parsed.url) {
               // 图片对象
@@ -559,29 +515,13 @@ function analyzeMediaStructure(extractedData: {
 }): MediaStructureAnalysis {
   const { livePhotoData, scriptJsonData } = extractedData;
 
-  debugLog('🔍 智能分析媒体内容结构...');
-
   // 查找明确标记为普通图片的对象 (livePhoto: false)
   const regularImages = scriptJsonData.filter(item =>
     item.data && item.data.livePhoto === false
   );
 
-  debugLog(`📸 发现普通图片: ${regularImages.length}张`);
-  regularImages.forEach((img, index) => {
-    debugLog(`   普通图片${index + 1}: ${img.data.infoList ? img.data.infoList.length : 0}个版本`);
-  });
-
   // 分析Live图结构 - 通过jsonIndex顺序智能匹配
   const liveGroups = analyzeLivePhotoGroups(livePhotoData);
-
-  debugLog(`📹 Live图分组: ${liveGroups.length}组`);
-  liveGroups.forEach((group, index) => {
-    const components = [];
-    if (group.wbPrv) components.push('WB_PRV');
-    if (group.wbDft) components.push('WB_DFT');
-    if (group.video) components.push('视频');
-    debugLog(`   Live图${index + 1}: ${components.join(' + ')}`);
-  });
 
   return {
     regularImages: regularImages.length,
@@ -944,21 +884,12 @@ export async function parseXiaohongshuLink(
       result.contentType = 'text';
     }
 
-    // 输出智能分析结果
-    if (result.mediaAnalysis) {
-      console.log(`📊 智能分析结果:`);
-      console.log(`   - Live图: ${result.mediaAnalysis.livePhotoGroups}组`);
-      console.log(`   - 普通图片: ${result.mediaAnalysis.regularImages}张`);
-      console.log(`   - 总内容: ${result.mediaAnalysis.totalGroups}项`);
-    }
 
-    debugLog(`解析完成: ${result.contentType}类型，${result.images.length}张图片，${result.videos?.length || 0}个视频`, true);
 
     return result;
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    debugLog(`解析失败: ${errorMessage}`, true);
 
     return {
       error: true,
@@ -969,13 +900,7 @@ export async function parseXiaohongshuLink(
   }
 }
 
-/**
- * 设置调试模式
- * @param enabled - 是否启用调试模式
- */
-export function setDebugMode(enabled: boolean): void {
-  DEFAULT_CONFIG.debug.verbose = enabled;
-}
+
 
 /**
  * 简化的解析函数，只返回基本信息
@@ -1030,26 +955,17 @@ export function isXiaohongshuLink(url: string | null | undefined): boolean {
  */
 export async function parseXiaohongshu(xhsUrl: string, maxRetries: number = 2): Promise<XiaohongshuResult> {
   try {
-    console.log(`🔍 开始解析小红书链接: ${xhsUrl}`);
-
-    // 启用调试模式以获取详细日志
-    setDebugMode(true);
-
     // 使用新的ES6解析器
     const extractedData = await parseXiaohongshuLink(xhsUrl, {
       network: {
         maxRetries: maxRetries,
         timeout: 15000,
         retryDelay: 1000
-      },
-      debug: {
-        verbose: true
       }
     });
 
     // 检查是否有错误
     if ('error' in extractedData) {
-      console.error(`❌ 解析失败: ${extractedData.message}`);
       throw new Error(extractedData.message || '解析失败');
     }
 
@@ -1098,22 +1014,17 @@ export async function parseXiaohongshu(xhsUrl: string, maxRetries: number = 2): 
     // 添加Live图标识
     if (extractedData.isLivePhoto === true) {
       (standardizedData as any).isLivePhoto = true;
-      console.log(`📸 Live图标识已传递到标准化数据中`);
     }
 
     // 添加分组内容标识
     if (extractedData.isGroupedContent === true) {
       (standardizedData as any).isGroupedContent = true;
-      console.log(`📸 分组内容标识已传递到标准化数据中，将添加"实况图片"标签`);
     }
 
     // 添加媒体分析结果
     if (extractedData.mediaAnalysis) {
       (standardizedData as any).mediaAnalysis = extractedData.mediaAnalysis;
-      console.log(`📊 媒体分析结果已传递到标准化数据中`);
     }
-
-    console.log(`📋 标准化数据完成，返回结果`);
     return standardizedData;
 
   } catch (error) {

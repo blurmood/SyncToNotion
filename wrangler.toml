@@ -22,8 +22,3 @@ IMAGE_HOST_USERNAME = "liuyiran"
 IMAGE_HOST_PASSWORD = "000609"
 ADMIN_KEY = "FmV+28CHSQNy+LTA1+lMobpytSWBihLjyWwQQwmqn84="
 
-# 开发环境配置
-[env.dev.vars]
-MAX_RETRIES = 2
-CACHE_TTL = 3600
-ADMIN_KEY = "dev-admin-key-for-testing"  # 开发环境使用的管理员密钥 

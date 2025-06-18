@@ -469,17 +469,9 @@ export async function syncToNotion(
   options: SyncOptions = {}
 ): Promise<SyncResult> {
   try {
-    console.log('🚀 开始同步到 Notion...');
-    console.log('📊 输入数据检查:');
-    console.log(`   标题: "${parsedData.title}"`);
-    console.log(`   作者: "${parsedData.author?.name}"`);
-    console.log(`   original_url: "${parsedData.original_url}"`);
-
     // 确定内容类型和数据库ID
     const contentType = determineContentType(parsedData);
     const databaseId = options.forceDatabaseId || getDatabaseId(contentType);
-
-    console.log(`🎯 内容类型: ${contentType}, 数据库ID: ${databaseId}`);
 
     // 处理标题和内容
     const { title, content } = processTitle(parsedData, contentType);
@@ -490,7 +482,7 @@ export async function syncToNotion(
       tags.push(...options.customTags.filter(tag => !tags.includes(tag)));
     }
 
-    console.log('最终标签列表:', tags);
+
 
     // 准备 Notion 页面属性
     const properties = createPageProperties(title, content, parsedData, tags, contentType);
@@ -499,9 +491,7 @@ export async function syncToNotion(
     const children = createPageBlocks(parsedData, contentType);
 
     // 创建 Notion 页面
-    console.log('📝 准备创建Notion页面...');
     const response = await createNotionPage(properties, children, databaseId);
-    console.log('✅ createNotionPage返回结果:', response);
 
     // 处理媒体文件和封面
     let mediaCount = { images: 0, videos: 0 };

@@ -238,7 +238,6 @@ function isLivePhoto(parsedData: ProcessedMediaData): boolean {
 
   // 额外检查：如果只是包含"live"但不是Live图关键词，不应该判断为Live图
   if (hasLiveKeyword) {
-    console.log(`🔍 检测到Live图关键词: "${title}"`);
     return true;
   }
 
@@ -492,30 +491,15 @@ router.get('/parse', async (request: Request, env: WorkerEnv, ctx: ExecutionCont
     let parsedData;
     let platform = '小红书';
 
-    // 添加详细的调试信息
-    console.log(`🔍 URL类型检测:`, {
-      url: xhsUrl,
-      includes_douyin: xhsUrl.includes('douyin.com'),
-      includes_v_douyin: xhsUrl.includes('v.douyin.com'),
-      url_length: xhsUrl.length,
-      url_type: typeof xhsUrl
-    });
-
     // 检查是否为抖音链接
     if (xhsUrl.includes('douyin.com') || xhsUrl.includes('v.douyin.com')) {
       platform = '抖音';
-      console.log(`🎯 识别为抖音链接，开始解析: ${xhsUrl}`);
       parsedData = await parseDouyin(xhsUrl);
     } else {
-      console.log(`🎯 识别为小红书链接，开始解析: ${xhsUrl}`);
       parsedData = await parseXiaohongshu(xhsUrl);
     }
-    console.log(`✅ 解析成功: ${platform}内容`);
-    console.log(`📊 内容类型: ${(parsedData as any).contentType}, 图片: ${parsedData.images?.length || 0}张, 视频: ${(parsedData as any).videos?.length || 0}个`);
-
     // 如果请求原始数据，直接返回解析结果，不进行媒体处理
     if (rawOnly) {
-      console.log('返回原始解析数据，跳过媒体处理');
       const rawResponse: ParseResponse = {
         ...parsedData,
         _processing: false
@@ -631,17 +615,11 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
 
     // 如果缓存中没有数据，或者数据中没有处理好的图片，则重新解析
     if (!parsedData || !parsedData.processed) {
-      console.log(`没有找到已处理的缓存数据，开始重新解析: ${xhsUrl}`);
-
       try {
         const rawData = await parseXiaohongshu(xhsUrl);
-        console.log('小红书内容解析成功');
 
         // 准备同步到Notion的数据
         parsedData = { ...rawData };
-
-        // 处理所有媒体文件（图片、封面、视频）
-        console.log('开始处理所有媒体文件...');
 
         // 设置图床服务的环境变量
         imageHostService.setEnv(env);
@@ -652,13 +630,6 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
 
           // 更新parsedData为处理后的数据
           Object.assign(parsedData, processedData);
-
-          console.log('所有媒体文件处理成功，可以同步到Notion');
-          console.log('处理后的数据:', {
-            cover: parsedData.cover ? '已处理' : '无',
-            images: parsedData.images ? parsedData.images.length : 0,
-            video: parsedData.video ? '已处理' : '无'
-          });
 
         } catch (mediaError) {
           console.error('媒体文件处理失败:', mediaError);
@@ -801,16 +772,11 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
 
     if (contentType.includes('application/json')) {
       try {
-        console.log(`📥 [${new Date().toISOString()}] 开始解析JSON请求体...`);
         const body = await request.json() as SyncRequestBody;
-        console.log(`📥 [${new Date().toISOString()}] JSON解析成功:`, JSON.stringify(body));
         text = body.text || '';
         adminKey = body.key || '';
         customTags = processCustomTags(body.tags);
-
-        console.log('处理后的自定义标签:', customTags);
       } catch (jsonError) {
-        console.error('解析JSON请求体失败:', jsonError);
         const errorResponse: ErrorResponse = {
           error: true,
           message: '无效的JSON格式',
@@ -873,7 +839,6 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
     }
 
     // 从文本中提取链接 - 支持小红书和抖音
-    console.log(`🔗 [${new Date().toISOString()}] 开始提取链接...`);
     let extractedUrl = extractXiaohongshuLink(text);
     let platform = '小红书';
 
@@ -883,7 +848,6 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
     }
 
     if (!extractedUrl) {
-      console.log(`❌ [${new Date().toISOString()}] 未找到有效的小红书或抖音链接`);
       const errorResponse: ErrorResponse = {
         error: true,
         message: '未找到有效的小红书或抖音链接',
@@ -893,15 +857,12 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
       return generateResponse(errorResponse, 400);
     }
 
-    console.log(`✅ [${new Date().toISOString()}] 提取到${platform}链接: ${extractedUrl}`);
-
     // 检查缓存中是否有处理好的数据
     const cacheKey = platform === '小红书' ? `xhs:${extractedUrl}` : `dy:${extractedUrl}`;
     let parsedData = await env.CACHE_KV.get(cacheKey, { type: 'json' }) as ProcessedMediaData | null;
 
     // 如果缓存中没有数据，或者数据中没有处理好的媒体文件，则重新解析
     if (!parsedData || !parsedData.processed) {
-      console.log(`🔄 [${new Date().toISOString()}] 没有找到已处理的缓存数据，开始重新解析: ${extractedUrl}`);
 
       try {
         let rawData;
@@ -910,7 +871,6 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         } else {
           rawData = await parseDouyin(extractedUrl);
         }
-        console.log(`✅ [${new Date().toISOString()}] ${platform}内容解析成功`);
 
         // 准备同步到Notion的数据
         parsedData = rawData as ProcessedMediaData;
@@ -918,7 +878,6 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         // 添加自定义标签到解析数据中
         if (customTags.length > 0) {
           parsedData.custom_tags = customTags;
-          console.log(`🏷️ [${new Date().toISOString()}] 添加自定义标签:`, customTags);
         }
 
         // 处理所有媒体文件（图片、封面、视频）
@@ -942,7 +901,6 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
           });
 
         } catch (mediaError) {
-          console.error(`❌ [${new Date().toISOString()}] 媒体文件处理失败:`, mediaError);
           throw new Error(`媒体文件处理失败: ${mediaError instanceof Error ? mediaError.message : String(mediaError)}`);
         }
 
@@ -951,9 +909,7 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         await env.CACHE_KV.put(cacheKey, JSON.stringify(parsedData), {
           expirationTtl: KV_CONFIG.CACHE_TTL
         });
-        console.log(`💾 [${new Date().toISOString()}] 数据已保存到缓存`);
       } catch (parseError) {
-        console.error(`❌ [${new Date().toISOString()}] 解析${platform}内容失败:`, parseError);
         const errorResponse: ErrorResponse = {
           error: true,
           message: `解析${platform}内容失败`,
@@ -1025,10 +981,8 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         note: '同步完成'
       };
 
-      console.log(`🎉 [${new Date().toISOString()}] 从文本同步到Notion完成`);
       return generateResponse(syncResponse);
     } catch (notionError) {
-      console.error(`❌ [${new Date().toISOString()}] 同步到Notion失败:`, notionError);
       const errorResponse: ErrorResponse = {
         error: true,
         message: '同步到Notion失败',
@@ -1040,7 +994,6 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
     }
 
   } catch (error) {
-    console.error(`❌ [${new Date().toISOString()}] 从文本同步到Notion失败:`, error);
     return handleError(error);
   }
 });

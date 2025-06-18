@@ -84,8 +84,6 @@ export function generateResponse<T = any>(
  * }
  */
 export function handleError(error: Error | unknown): Response {
-  console.error('发生错误:', error);
-  
   // 确保error是Error类型
   const err = error instanceof Error ? error : new Error(String(error));
   
@@ -164,8 +162,6 @@ export function safeJsonParse<T = any>(str: string, fallback: T = {} as T): T {
 export function extractXiaohongshuLink(text: string | null | undefined): string | null {
   if (!text) return null;
   
-  console.log('尝试从文本中提取小红书链接:', text);
-  
   // 定义匹配模式
   const patterns: RegExp[] = [
     // 模式1: 标准的 xhslink.com 链接
@@ -182,12 +178,10 @@ export function extractXiaohongshuLink(text: string | null | undefined): string 
     const match = text.match(patterns[i]);
     if (match) {
       const link = match[1] || match[0];
-      console.log(`使用模式${i + 1}找到链接:`, link);
       return link;
     }
   }
-  
-  console.log('未找到小红书链接');
+
   return null;
 }
 
