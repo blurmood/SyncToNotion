@@ -223,11 +223,11 @@ export class BatchProcessingManager {
 
     // 处理当前批次
     const processResult = await this.processBatchItems(currentBatchItems, task);
-    
+
     // 更新任务状态
     task.completedBatches++;
     task.currentBatch++;
-    
+
     // 更新已处理结果
     if (processResult.videos && processResult.videos.length > 0) {
       task.processedResults.videos!.push(...processResult.videos);
@@ -240,13 +240,15 @@ export class BatchProcessingManager {
     this.removeProcessedItems(task, currentBatchItems);
 
     // 检查是否完成
-    const isComplete = task.completedBatches >= task.totalBatches || 
+    const isComplete = task.completedBatches >= task.totalBatches ||
                       (task.pendingItems.videos!.length === 0 && task.pendingItems.images!.length === 0);
-    
+
     if (isComplete) {
       task.status = 'completed';
     }
 
+    // 添加延迟以避免KV频率限制
+    await new Promise(resolve => setTimeout(resolve, 100));
     await this.updateTask(task);
 
     return {

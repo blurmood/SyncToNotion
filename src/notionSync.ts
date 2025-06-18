@@ -270,17 +270,18 @@ function getDatabaseId(contentType: ContentType): string {
 function processTitle(parsedData: ParsedData, contentType: ContentType): { title: string; content: string } {
   let title = '无标题';
   let content = parsedData.content || '';
-  
-  // 提取【】及其内容作为标题
-  const titleRegex = /【[^【】]+】/;
-  const titleMatch = content.match(titleRegex);
-  if (titleMatch?.[0]) {
-    title = titleMatch[0].trim();
-    // 从正文中移除标题部分
-    content = content.replace(titleMatch[0], '').trim();
-  } else if (parsedData.title && parsedData.title !== '抖音视频' && parsedData.title !== '无标题') {
-    // 如果没有【】格式的标题，但有title字段，使用title字段
-    title = parsedData.title;
+
+  // 优先使用解析器提供的title字段
+  if (parsedData.title && parsedData.title !== '抖音视频' && parsedData.title !== '无标题') {
+    title = parsedData.title.trim();
+  } else if (content) {
+    // 如果没有title字段，使用content的前30个字符作为标题
+    const shortContent = content.replace(/\n/g, ' ').trim();
+    if (shortContent.length > 30) {
+      title = shortContent.substring(0, 30) + '...';
+    } else if (shortContent.length > 0) {
+      title = shortContent;
+    }
   }
   
   // 如果内容为空但有description字段，使用description作为内容

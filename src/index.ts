@@ -96,8 +96,6 @@ export interface SyncRequestBody {
   key: string;
   /** 自定义标签 */
   tags?: string[] | string;
-  /** 是否启用分批模式 */
-  batch_mode?: boolean;
   /** 自定义批次大小 */
   batch_size?: number;
 }
@@ -822,7 +820,6 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
     let adminKey = '';
     let customTags: string[] = [];
 
-    let batchMode = false;
     let batchSize = 12;
 
     if (contentType.includes('application/json')) {
@@ -831,7 +828,6 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         text = body.text || '';
         adminKey = body.key || '';
         customTags = processCustomTags(body.tags);
-        batchMode = body.batch_mode || false;
         batchSize = body.batch_size || 12;
       } catch (jsonError) {
         const errorResponse: ErrorResponse = {
@@ -858,7 +854,6 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         customTags = processCustomTags(tagsValue);
 
         // 处理分批参数
-        batchMode = formData.get('batch_mode')?.toString() === 'true' || false;
         batchSize = parseInt(formData.get('batch_size')?.toString() || '12') || 12;
       } catch (formError) {
         console.error('解析表单数据失败:', formError);
@@ -944,78 +939,199 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         const totalImages = parsedData.images?.length || 0;
         const estimatedSubrequests = BatchProcessingManager.estimateSubrequests(parsedData.videos, parsedData.images);
 
-        // 自动启用分批模式或用户手动启用
-        const shouldUseBatch = batchMode || BatchProcessingManager.shouldUseBatchProcessing(parsedData.videos, parsedData.images);
+        // 自动启用分批模式
+        const shouldUseBatch = BatchProcessingManager.shouldUseBatchProcessing(parsedData.videos, parsedData.images);
 
         if (shouldUseBatch && estimatedSubrequests > 45) {
-          // 使用分批处理模式
-          const batchManager = new BatchProcessingManager(env);
-          const taskId = await batchManager.createTask(
-            parsedData,
-            {
-              videos: parsedData.videos,
-              images: parsedData.images
-            },
-            batchSize
-          );
+          // 智能处理模式：根据文件数量选择处理策略
+          const totalFiles = totalVideos + totalImages;
+          console.log(`🔄 启用分批处理模式: ${totalVideos}个视频, ${totalImages}张图片, 总计${totalFiles}个文件`);
 
-          // 处理第一批
-          const firstBatchResult = await batchManager.processNextBatch(taskId);
+          if (totalFiles <= 24) {
+            // 小批次：一次性同步处理所有批次（适合快捷指令）
+            console.log(`📦 小批次模式: 一次性处理${totalFiles}个文件`);
 
-          // 创建部分处理的数据用于Notion同步
-          const partialData = { ...parsedData };
-          partialData.videos = firstBatchResult.processedItems.videos || [];
-          partialData.images = firstBatchResult.processedItems.images || [];
-          partialData.processed = true;
+            const batchManager = new BatchProcessingManager(env);
+            const taskId = await batchManager.createTask(
+              parsedData,
+              {
+                videos: parsedData.videos,
+                images: parsedData.images
+              },
+              batchSize
+            );
 
-          // 同步第一批到Notion
-          const notionResponse = await syncToNotion(partialData as ParsedData, {
-            kv: env.CACHE_KV,
-            originalUrl: extractedUrl,
-            platform: platform as '小红书' | '抖音'
-          });
+            // 处理所有批次
+            let currentBatchResult = await batchManager.processNextBatch(taskId);
+            let allProcessedVideos: string[] = currentBatchResult.processedItems.videos || [];
+            let allProcessedImages: string[] = currentBatchResult.processedItems.images || [];
 
-          if (!notionResponse.success) {
-            throw new Error(notionResponse.error || '同步到Notion失败');
-          }
+            // 创建第一批数据用于Notion同步
+            const partialData = { ...parsedData };
+            partialData.videos = allProcessedVideos;
+            partialData.images = allProcessedImages;
+            partialData.processed = true;
 
-          // 保存任务的Notion信息
-          const task = await batchManager.getTask(taskId);
-          if (task) {
-            task.notionInfo = {
-              pageId: notionResponse.pageId || '',
-              pageUrl: notionResponse.pageId ? `https://notion.so/${notionResponse.pageId}` : ''
+            // 同步第一批到Notion
+            const notionResponse = await syncToNotion(partialData as ParsedData, {
+              kv: env.CACHE_KV,
+              originalUrl: extractedUrl,
+              platform: platform as '小红书' | '抖音'
+            });
+
+            if (!notionResponse.success) {
+              throw new Error(notionResponse.error || '同步到Notion失败');
+            }
+
+            // 保存任务的Notion信息
+            let task = await batchManager.getTask(taskId);
+            if (task) {
+              task.notionInfo = {
+                pageId: notionResponse.pageId || '',
+                pageUrl: notionResponse.pageId ? `https://notion.so/${notionResponse.pageId}` : ''
+              };
+              await batchManager.updateTask(task);
+            }
+
+            // 如果还有剩余批次，继续处理
+            while (!currentBatchResult.isComplete) {
+              console.log(`🔄 处理第${currentBatchResult.batchInfo.current_batch + 1}批...`);
+
+              // 添加延迟避免请求过快
+              await new Promise(resolve => setTimeout(resolve, 500));
+
+              // 处理下一批
+              currentBatchResult = await batchManager.processNextBatch(taskId);
+
+              // 累积处理结果
+              if (currentBatchResult.processedItems.videos) {
+                allProcessedVideos.push(...currentBatchResult.processedItems.videos);
+              }
+              if (currentBatchResult.processedItems.images) {
+                allProcessedImages.push(...currentBatchResult.processedItems.images);
+              }
+            }
+
+            // 所有批次处理完成，更新Notion页面
+            if (task && task.notionInfo && allProcessedVideos.length > partialData.videos!.length) {
+              console.log(`✅ 所有批次处理完成，更新Notion页面...`);
+
+              const finalData = { ...parsedData };
+              finalData.videos = allProcessedVideos;
+              finalData.images = allProcessedImages;
+              finalData.processed = true;
+
+              try {
+                // 更新Notion页面包含所有处理的媒体文件
+                await syncToNotion(finalData as ParsedData, {
+                  kv: env.CACHE_KV,
+                  originalUrl: extractedUrl,
+                  platform: platform as '小红书' | '抖音',
+                  pageId: task.notionInfo.pageId // 更新现有页面
+                });
+                console.log(`✅ Notion页面更新成功: ${task.notionInfo.pageId}`);
+              } catch (updateError) {
+                console.error('❌ Notion页面更新失败:', updateError);
+                // 更新失败不影响整体流程
+              }
+            }
+
+            // 清理任务
+            await batchManager.deleteTask(taskId);
+
+            // 获取所有应用的标签
+            const allTags = mergeAllTags(parsedData, customTags, platform);
+
+            // 返回完整的处理结果
+            const finalResponse: SyncResponse = {
+              message: '所有媒体文件已同步到Notion',
+              extracted_link: extractedUrl,
+              platform: platform,
+              notion_page_id: notionResponse.pageId || '',
+              notion_page_url: notionResponse.pageId ? `https://notion.so/${notionResponse.pageId}` : undefined,
+              applied_tags: allTags,
+              video_processed: allProcessedVideos.length > 0,
+              video_processing: false,
+              video_url: allProcessedVideos[0] || null,
+              video_download_url: null,
+              async_processing: false,
+              note: `处理完成: ${allProcessedVideos.length}个视频, ${allProcessedImages.length}张图片`
             };
-            await batchManager.updateTask(task);
+
+            return generateResponse(finalResponse);
+
+          } else {
+            // 大批次：返回分批处理结果，需要续传（适合API调用）
+            console.log(`📦 大批次模式: 返回分批处理结果，需要续传`);
+
+            const batchManager = new BatchProcessingManager(env);
+            const taskId = await batchManager.createTask(
+              parsedData,
+              {
+                videos: parsedData.videos,
+                images: parsedData.images
+              },
+              batchSize
+            );
+
+            // 处理第一批
+            const firstBatchResult = await batchManager.processNextBatch(taskId);
+
+            // 创建部分处理的数据用于Notion同步
+            const partialData = { ...parsedData };
+            partialData.videos = firstBatchResult.processedItems.videos || [];
+            partialData.images = firstBatchResult.processedItems.images || [];
+            partialData.processed = true;
+
+            // 同步第一批到Notion
+            const notionResponse = await syncToNotion(partialData as ParsedData, {
+              kv: env.CACHE_KV,
+              originalUrl: extractedUrl,
+              platform: platform as '小红书' | '抖音'
+            });
+
+            if (!notionResponse.success) {
+              throw new Error(notionResponse.error || '同步到Notion失败');
+            }
+
+            // 保存任务的Notion信息
+            const task = await batchManager.getTask(taskId);
+            if (task) {
+              task.notionInfo = {
+                pageId: notionResponse.pageId || '',
+                pageUrl: notionResponse.pageId ? `https://notion.so/${notionResponse.pageId}` : ''
+              };
+              await batchManager.updateTask(task);
+            }
+
+            // 获取所有应用的标签
+            const allTags = mergeAllTags(parsedData, customTags, platform);
+
+            const batchResponse: BatchSyncResponse = {
+              message: firstBatchResult.isComplete ? "处理完成" : "第一批处理完成，需要续传",
+              task_id: taskId,
+              extracted_link: extractedUrl,
+              platform: platform,
+              batch_info: firstBatchResult.batchInfo,
+              processed_count: {
+                videos: firstBatchResult.processedItems.videos?.length || 0,
+                images: firstBatchResult.processedItems.images?.length || 0
+              },
+              remaining_count: {
+                videos: Math.max(0, totalVideos - (firstBatchResult.processedItems.videos?.length || 0)),
+                images: Math.max(0, totalImages - (firstBatchResult.processedItems.images?.length || 0))
+              },
+              notion_page_id: notionResponse.pageId,
+              notion_page_url: notionResponse.pageId ? `https://notion.so/${notionResponse.pageId}` : undefined,
+              applied_tags: allTags,
+              status: firstBatchResult.isComplete ? "completed" : "partial_complete",
+              continue_url: firstBatchResult.isComplete ? null : `/continue-processing/${taskId}`,
+              notion_updated: true,
+              details: firstBatchResult.details
+            };
+
+            return generateResponse(batchResponse);
           }
-
-          // 获取所有应用的标签
-          const allTags = mergeAllTags(parsedData, customTags, platform);
-
-          const batchResponse: BatchSyncResponse = {
-            message: firstBatchResult.isComplete ? "处理完成" : "第一批处理完成",
-            task_id: taskId,
-            extracted_link: extractedUrl,
-            platform: platform,
-            batch_info: firstBatchResult.batchInfo,
-            processed_count: {
-              videos: firstBatchResult.processedItems.videos?.length || 0,
-              images: firstBatchResult.processedItems.images?.length || 0
-            },
-            remaining_count: {
-              videos: Math.max(0, totalVideos - (firstBatchResult.processedItems.videos?.length || 0)),
-              images: Math.max(0, totalImages - (firstBatchResult.processedItems.images?.length || 0))
-            },
-            notion_page_id: notionResponse.pageId,
-            notion_page_url: notionResponse.pageId ? `https://notion.so/${notionResponse.pageId}` : undefined,
-            applied_tags: allTags,
-            status: firstBatchResult.isComplete ? "completed" : "partial_complete",
-            continue_url: firstBatchResult.isComplete ? null : `/continue-processing/${taskId}`,
-            notion_updated: true,
-            details: firstBatchResult.details
-          };
-
-          return generateResponse(batchResponse);
         } else {
           // 使用传统处理模式
           // 设置图床服务的环境变量
