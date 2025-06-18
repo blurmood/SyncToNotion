@@ -1149,9 +1149,39 @@ router.get('/continue-processing/:taskId', async (request: Request, env: WorkerE
     if (result.isComplete) {
       // 任务完成，更新Notion页面
       const task = await batchManager.getTask(taskId);
-      if (task && task.notionInfo) {
-        // 这里可以添加更新Notion页面的逻辑，添加剩余的媒体文件
-        // 暂时跳过，因为Notion API更新比较复杂
+      if (task && task.notionInfo && result.processedItems) {
+        try {
+          // 构建更新数据，包含所有已处理的媒体文件
+          const updateData = { ...task.originalData };
+
+          // 合并所有批次的处理结果
+          updateData.videos = task.processedResults.videos || [];
+          updateData.images = task.processedResults.images || [];
+
+          // 添加当前批次的结果
+          if (result.processedItems.videos && result.processedItems.videos.length > 0) {
+            updateData.videos.push(...result.processedItems.videos);
+          }
+          if (result.processedItems.images && result.processedItems.images.length > 0) {
+            updateData.images.push(...result.processedItems.images);
+          }
+
+          // 标记为已处理
+          updateData.processed = true;
+
+          // 更新Notion页面
+          const notionUpdateResult = await syncToNotion(updateData as ParsedData, {
+            kv: env.CACHE_KV,
+            originalUrl: task.originalData.original_url || '',
+            platform: task.originalData.platform || '未知平台',
+            pageId: task.notionInfo.pageId // 更新现有页面而不是创建新页面
+          });
+
+          console.log(`✅ Notion页面更新成功: ${task.notionInfo.pageId}`);
+        } catch (updateError) {
+          console.error('❌ Notion页面更新失败:', updateError);
+          // 更新失败不影响整体流程
+        }
       }
 
       const response: BatchSyncResponse = {

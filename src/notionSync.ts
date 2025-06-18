@@ -205,6 +205,8 @@ export interface SyncOptions {
   originalUrl?: string;
   /** 平台类型（用于页面-文件关联） */
   platform?: '小红书' | '抖音';
+  /** 要更新的页面ID（如果提供，则更新现有页面而不是创建新页面） */
+  pageId?: string;
 }
 
 /** 同步结果接口 */
@@ -490,8 +492,16 @@ export async function syncToNotion(
     // 准备页面内容块
     const children = createPageBlocks(parsedData, contentType);
 
-    // 创建 Notion 页面
-    const response = await createNotionPage(properties, children, databaseId);
+    let response: NotionApiResponse;
+
+    // 检查是否为更新现有页面
+    if (options.pageId) {
+      console.log(`🔄 更新现有Notion页面: ${options.pageId}`);
+      response = await updateNotionPage(options.pageId, properties, children);
+    } else {
+      // 创建新的 Notion 页面
+      response = await createNotionPage(properties, children, databaseId);
+    }
 
     // 处理媒体文件和封面
     let mediaCount = { images: 0, videos: 0 };
@@ -936,6 +946,78 @@ async function createNotionPage(
   console.log('🔗 页面URL:', `https://notion.so/${responseData.id.replace(/-/g, '')}`);
 
   return responseData;
+}
+
+/**
+ * 更新现有的 Notion 页面
+ * @param pageId - 页面ID
+ * @param properties - 页面属性
+ * @param children - 页面内容块
+ * @returns Notion API 响应
+ */
+async function updateNotionPage(
+  pageId: string,
+  properties: NotionPageProperties,
+  children: NotionBlock[] = []
+): Promise<NotionApiResponse> {
+  console.log('🔄 开始更新Notion页面...');
+  console.log('📝 页面ID:', pageId);
+  console.log('📋 更新属性:', JSON.stringify(properties, null, 2));
+
+  // 首先更新页面属性
+  const updatePropertiesResponse = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${NOTION_CONFIG.API_KEY}`,
+      'Notion-Version': NOTION_API_VERSION
+    },
+    body: JSON.stringify({
+      properties: properties
+    })
+  });
+
+  console.log('📊 更新属性响应状态:', updatePropertiesResponse.status, updatePropertiesResponse.statusText);
+
+  if (!updatePropertiesResponse.ok) {
+    const errorText = await updatePropertiesResponse.text();
+    console.error('❌ 更新页面属性失败:', errorText);
+    throw new Error(`更新页面属性失败 (${updatePropertiesResponse.status}): ${errorText}`);
+  }
+
+  const updatedPageData = await updatePropertiesResponse.json() as NotionApiResponse;
+  console.log('✅ 页面属性更新成功!');
+
+  // 如果有新的内容块，追加到页面末尾
+  if (children.length > 0) {
+    console.log('📝 追加新的内容块数量:', children.length);
+
+    const appendBlocksResponse = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${NOTION_CONFIG.API_KEY}`,
+        'Notion-Version': NOTION_API_VERSION
+      },
+      body: JSON.stringify({
+        children: children
+      })
+    });
+
+    console.log('📊 追加内容块响应状态:', appendBlocksResponse.status, appendBlocksResponse.statusText);
+
+    if (!appendBlocksResponse.ok) {
+      const errorText = await appendBlocksResponse.text();
+      console.error('❌ 追加内容块失败:', errorText);
+      // 内容块追加失败不影响整体更新，只记录错误
+      console.warn('⚠️ 页面属性已更新，但内容块追加失败');
+    } else {
+      console.log('✅ 内容块追加成功!');
+    }
+  }
+
+  console.log('🔗 更新后页面URL:', `https://notion.so/${pageId.replace(/-/g, '')}`);
+  return updatedPageData;
 }
 
 /**
