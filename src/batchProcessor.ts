@@ -90,7 +90,7 @@ export class BatchProcessingManager {
   private readonly TASK_PREFIX = 'batch_task:';
   private readonly TASK_EXPIRY = 3600; // 1小时过期
   private readonly DEFAULT_VIDEO_BATCH_SIZE = 12; // 视频批次大小
-  private readonly DEFAULT_IMAGE_BATCH_SIZE = 18; // 图片批次大小
+  private readonly DEFAULT_IMAGE_BATCH_SIZE = 15; // 图片批次大小
 
   constructor(env: WorkerEnv) {
     this.env = env;
@@ -272,42 +272,33 @@ export class BatchProcessingManager {
    */
   private getCurrentBatchItems(task: ProcessingTask): MediaItem[] {
     const items: MediaItem[] = [];
-    
-    // 计算当前批次的起始索引
-    const batchIndex = task.currentBatch - 1;
     const videosPerBatch = this.DEFAULT_VIDEO_BATCH_SIZE;
-    const imagesPerBatch = this.DEFAULT_IMAGE_BATCH_SIZE;
-    
+
+    // 直接从待处理列表的开头取项目（因为已处理的项目已被移除）
     // 优先处理视频
     if (task.pendingItems.videos && task.pendingItems.videos.length > 0) {
-      const videoStartIndex = batchIndex * videosPerBatch;
-      const videoEndIndex = Math.min(videoStartIndex + videosPerBatch, task.pendingItems.videos.length);
-      
-      for (let i = videoStartIndex; i < videoEndIndex; i++) {
-        if (task.pendingItems.videos[i]) {
-          items.push({
-            type: 'video',
-            url: task.pendingItems.videos[i],
-            index: i
-          });
-        }
+      const videosToProcess = Math.min(videosPerBatch, task.pendingItems.videos.length);
+
+      for (let i = 0; i < videosToProcess; i++) {
+        items.push({
+          type: 'video',
+          url: task.pendingItems.videos[i],
+          index: i
+        });
       }
     }
-    
+
     // 如果当前批次还有空间，添加图片
     const remainingSpace = Math.max(0, videosPerBatch - items.length);
     if (remainingSpace > 0 && task.pendingItems.images && task.pendingItems.images.length > 0) {
-      const imageStartIndex = batchIndex * imagesPerBatch;
-      const imageEndIndex = Math.min(imageStartIndex + remainingSpace, task.pendingItems.images.length);
-      
-      for (let i = imageStartIndex; i < imageEndIndex; i++) {
-        if (task.pendingItems.images[i]) {
-          items.push({
-            type: 'image',
-            url: task.pendingItems.images[i],
-            index: i
-          });
-        }
+      const imagesToProcess = Math.min(remainingSpace, task.pendingItems.images.length);
+
+      for (let i = 0; i < imagesToProcess; i++) {
+        items.push({
+          type: 'image',
+          url: task.pendingItems.images[i],
+          index: i
+        });
       }
     }
 
@@ -405,16 +396,23 @@ export class BatchProcessingManager {
    * @param processedItems - 已处理项目
    */
   private removeProcessedItems(task: ProcessingTask, processedItems: MediaItem[]): void {
-    // 按索引倒序排序，避免删除时索引错乱
-    const sortedItems = [...processedItems].sort((a, b) => b.index - a.index);
+    // 创建要删除的URL集合，避免索引问题
+    const processedVideoUrls = new Set(
+      processedItems.filter(item => item.type === 'video').map(item => item.url)
+    );
+    const processedImageUrls = new Set(
+      processedItems.filter(item => item.type === 'image').map(item => item.url)
+    );
 
-    sortedItems.forEach(item => {
-      if (item.type === 'video' && task.pendingItems.videos) {
-        task.pendingItems.videos.splice(item.index, 1);
-      } else if (item.type === 'image' && task.pendingItems.images) {
-        task.pendingItems.images.splice(item.index, 1);
-      }
-    });
+    // 从视频列表中移除已处理的项目
+    if (task.pendingItems.videos && processedVideoUrls.size > 0) {
+      task.pendingItems.videos = task.pendingItems.videos.filter(url => !processedVideoUrls.has(url));
+    }
+
+    // 从图片列表中移除已处理的项目
+    if (task.pendingItems.images && processedImageUrls.size > 0) {
+      task.pendingItems.images = task.pendingItems.images.filter(url => !processedImageUrls.has(url));
+    }
   }
 
   /**
@@ -490,8 +488,8 @@ export class BatchProcessingManager {
     const videoCount = videos?.length || 0;
     const imageCount = images?.length || 0;
 
-    // 视频超过12个或图片超过18个时启用分批处理
-    return videoCount > 12 || imageCount > 18;
+    // 视频超过12个或图片超过15个时启用分批处理
+    return videoCount > 12 || imageCount > 15;
   }
 
   /**
