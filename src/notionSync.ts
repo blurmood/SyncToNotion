@@ -8,6 +8,7 @@
  */
 
 import { NOTION_CONFIG, type NotionConfig } from './config.js';
+import { log } from './logger.js';
 
 // ==================== 类型定义 ====================
 
@@ -234,7 +235,7 @@ export interface SyncResult {
 function determineContentType(parsedData: ParsedData): ContentType {
   const originalUrl = parsedData.original_url || '';
 
-  console.log('🔍 determineContentType 调试信息:', {
+  log.info('🔍 determineContentType 调试信息:', {
     original_url: originalUrl,
     includes_douyin: originalUrl.includes('douyin.com'),
     includes_v_douyin: originalUrl.includes('v.douyin.com'),
@@ -242,11 +243,11 @@ function determineContentType(parsedData: ParsedData): ContentType {
   });
 
   if (originalUrl.includes('douyin.com') || originalUrl.includes('v.douyin.com')) {
-    console.log('🎯 识别为抖音内容');
+    log.info('🎯 识别为抖音内容');
     return 'douyin';
   }
 
-  console.log('🎯 识别为小红书内容');
+  log.info('🎯 识别为小红书内容');
   return 'xiaohongshu';
 }
 
@@ -314,7 +315,7 @@ function processTitle(parsedData: ParsedData, contentType: ContentType): { title
     if (!title.includes(content)) {
       title = content;
     }
-    console.log('抖音内容：将标题和正文合并到标题属性中');
+    log.info('抖音内容：将标题和正文合并到标题属性中');
   }
   
   return { title, content };
@@ -366,7 +367,7 @@ function generateTags(parsedData: ParsedData, contentType: ContentType): string[
   if (isLive) {
     // Live图笔记：只添加"实况图片"标签
     tags.push('实况图片');
-    console.log('🔍 检测到Live图，添加"实况图片"标签');
+    log.info('🔍 检测到Live图，添加"实况图片"标签');
   } else {
     // 非Live图笔记：根据内容添加相应标签
 
@@ -424,7 +425,7 @@ function isValidImageUrl(url: string): boolean {
 
     return hasImageExtension || isImageHost;
   } catch (error) {
-    console.warn(`验证图片URL失败: ${url}`, error);
+    log.warn(`验证图片URL失败: ${url}`, error);
     return false;
   }
 }
@@ -509,71 +510,71 @@ export async function syncToNotion(
       // 处理图片
       if (Array.isArray(parsedData.images) && parsedData.images.length > 0) {
         if (isLive) {
-          console.log(`📸 Live图内容: 处理并添加 ${parsedData.images.length} 张图片到页面属性`);
+          log.info(`📸 Live图内容: 处理并添加 ${parsedData.images.length} 张图片到页面属性`);
           await addMediaToPage(pageId, parsedData.images, '图片', true);
           mediaCount.images = parsedData.images.length;
         } else if (!isVideoContent) {
-          console.log(`📸 图文内容: 处理并添加 ${parsedData.images.length} 张图片到页面属性`);
+          log.info(`📸 图文内容: 处理并添加 ${parsedData.images.length} 张图片到页面属性`);
           await addMediaToPage(pageId, parsedData.images, '图片', false);
           mediaCount.images = parsedData.images.length;
         } else {
-          console.log(`🎬 视频内容: 跳过图片属性，不添加图片到页面属性`);
+          log.info(`🎬 视频内容: 跳过图片属性，不添加图片到页面属性`);
         }
       }
 
       // 处理视频（包括Live图多视频）
       if (parsedData.video) {
-        console.log(`🔍 开始处理视频数据...`);
-        console.log(`🔍 parsedData.video: ${parsedData.video}`);
-        console.log(`🔍 parsedData.video_download_url: ${parsedData.video_download_url}`);
-        console.log(`🔍 parsedData.videos: ${JSON.stringify(parsedData.videos)}`);
+        log.info(`🔍 开始处理视频数据...`);
+        log.info(`🔍 parsedData.video: ${parsedData.video}`);
+        log.info(`🔍 parsedData.video_download_url: ${parsedData.video_download_url}`);
+        log.info(`🔍 parsedData.videos: ${JSON.stringify(parsedData.videos)}`);
 
         const videoUrls: string[] = [];
 
         // 检查是否为真正的Live图（不仅仅是多个视频URL）
         const isLive = isLivePhoto(parsedData);
         if (isLive && parsedData.videos && Array.isArray(parsedData.videos) && parsedData.videos.length > 1) {
-          console.log(`📸 Live图内容: 处理 ${parsedData.videos.length} 个视频`);
-          console.log(`📸 Live图视频列表:`, parsedData.videos);
+          log.info(`📸 Live图内容: 处理 ${parsedData.videos.length} 个视频`);
+          log.info(`📸 Live图视频列表:`, parsedData.videos);
 
           // 去重处理
           const uniqueVideos = [...new Set(parsedData.videos)];
-          console.log(`📸 去重后的Live图视频: ${uniqueVideos.length} 个`);
+          log.info(`📸 去重后的Live图视频: ${uniqueVideos.length} 个`);
 
           videoUrls.push(...uniqueVideos);
           mediaCount.videos = uniqueVideos.length;
         } else {
           // 单个视频（包括被错误识别为多视频的普通视频笔记）
           const videoDownloadUrl = parsedData.video_download_url || parsedData.video;
-          console.log(`🎬 单个视频URL: ${videoDownloadUrl}`);
+          log.info(`🎬 单个视频URL: ${videoDownloadUrl}`);
 
           // 检查视频URL是否有效
           if (!videoDownloadUrl || videoDownloadUrl === 'undefined' || typeof videoDownloadUrl !== 'string') {
-            console.error('❌ 页面属性：视频URL无效，跳过添加到页面属性:', videoDownloadUrl);
-            console.error('❌ parsedData.video_download_url:', parsedData.video_download_url);
-            console.error('❌ parsedData.video:', parsedData.video);
+            log.error('❌ 页面属性：视频URL无效，跳过添加到页面属性:', videoDownloadUrl);
+            log.error('❌ parsedData.video_download_url:', parsedData.video_download_url);
+            log.error('❌ parsedData.video:', parsedData.video);
           } else {
             videoUrls.push(videoDownloadUrl);
             mediaCount.videos = 1;
           }
         }
 
-        console.log(`🔍 最终视频URL数组:`, videoUrls);
-        console.log(`🔍 视频数组长度: ${videoUrls.length}`);
+        log.info(`🔍 最终视频URL数组:`, videoUrls);
+        log.info(`🔍 视频数组长度: ${videoUrls.length}`);
 
         // 添加所有视频到页面属性
         await addMediaToPage(pageId, videoUrls, '视频', isLive);
-        console.log(`✅ 视频链接已添加到页面属性中: ${videoUrls.length} 个视频`);
+        log.info(`✅ 视频链接已添加到页面属性中: ${videoUrls.length} 个视频`);
       }
 
       // 设置封面图片
       if (parsedData.cover && !options.skipCover) {
-        console.log(`🖼️ 设置页面封面: ${isVideoContent ? '视频封面' : '图文封面'}`);
+        log.info(`🖼️ 设置页面封面: ${isVideoContent ? '视频封面' : '图文封面'}`);
         await setPageCover(pageId, parsedData.cover);
       }
     }
 
-    console.log('同步到 Notion 完成');
+    log.info('同步到 Notion 完成');
 
     return {
       success: true,
@@ -583,9 +584,9 @@ export async function syncToNotion(
     };
 
   } catch (error) {
-    console.error('❌ 同步到 Notion 失败:', error);
-    console.error('❌ 错误详情:', error instanceof Error ? error.message : String(error));
-    console.error('❌ 错误堆栈:', error instanceof Error ? error.stack : '无堆栈信息');
+    log.error('❌ 同步到 Notion 失败:', error);
+    log.error('❌ 错误详情:', error instanceof Error ? error.message : String(error));
+    log.error('❌ 错误堆栈:', error instanceof Error ? error.stack : '无堆栈信息');
 
     const errorMessage = error instanceof Error ? error.message : String(error);
 
@@ -695,13 +696,13 @@ function createPageBlocks(parsedData: ParsedData, contentType: ContentType): Not
   // 添加图片块
   if (Array.isArray(parsedData.images) && parsedData.images.length > 0) {
     if (isLive) {
-      console.log(`📸 Live图内容: 添加 ${parsedData.images.length} 张图片到页面内容`);
+      log.info(`📸 Live图内容: 添加 ${parsedData.images.length} 张图片到页面内容`);
     } else if (!isVideoContent) {
-      console.log(`📸 图文内容: 添加 ${parsedData.images.length} 张图片到页面内容`);
+      log.info(`📸 图文内容: 添加 ${parsedData.images.length} 张图片到页面内容`);
     } else {
-      console.log(`🎬 视频内容: 跳过图片块，仅显示视频内容`);
+      log.info(`🎬 视频内容: 跳过图片块，仅显示视频内容`);
       if (parsedData.images && parsedData.images.length > 0) {
-        console.log(`🎬 已过滤 ${parsedData.images.length} 张图片，避免在视频笔记中显示`);
+        log.info(`🎬 已过滤 ${parsedData.images.length} 张图片，避免在视频笔记中显示`);
       }
     }
 
@@ -709,11 +710,11 @@ function createPageBlocks(parsedData: ParsedData, contentType: ContentType): Not
     if (isLive || !isVideoContent) {
       // 为每张图片创建图片块（使用已处理的图片URL）
       for (const imageUrl of parsedData.images) {
-        console.log(`📸 创建图片块: ${imageUrl}`);
+        log.info(`📸 创建图片块: ${imageUrl}`);
 
         // 验证图片URL
         if (!isValidImageUrl(imageUrl)) {
-          console.error(`❌ 跳过无效的图片URL: ${imageUrl}`);
+          log.error(`❌ 跳过无效的图片URL: ${imageUrl}`);
           continue;
         }
 
@@ -722,8 +723,8 @@ function createPageBlocks(parsedData: ParsedData, contentType: ContentType): Not
                              imageUrl.includes('pub-13891ccdad9f4aababe3cc021e21947e.r2.dev');
 
         if (!isProcessedUrl) {
-          console.warn(`⚠️ 图片URL似乎未经处理: ${imageUrl}`);
-          console.warn(`⚠️ 原始小红书链接可能无法在Notion中显示`);
+          log.warn(`⚠️ 图片URL似乎未经处理: ${imageUrl}`);
+          log.warn(`⚠️ 原始小红书链接可能无法在Notion中显示`);
         }
 
         const imageBlock: NotionImageBlock = {
@@ -738,26 +739,26 @@ function createPageBlocks(parsedData: ParsedData, contentType: ContentType): Not
         };
 
         children.push(imageBlock);
-        console.log(`✅ 图片块创建完成: ${imageUrl.substring(0, 50)}...`);
+        log.info(`✅ 图片块创建完成: ${imageUrl.substring(0, 50)}...`);
       }
     }
   }
 
   // 添加视频块或处理提示（支持Live图多视频）
   if (parsedData.video) {
-    console.log(`🔍 页面内容：开始处理视频块...`);
-    console.log(`🔍 页面内容：parsedData.video: ${parsedData.video}`);
-    console.log(`🔍 页面内容：parsedData.video_download_url: ${parsedData.video_download_url}`);
-    console.log(`🔍 页面内容：parsedData.videos: ${JSON.stringify(parsedData.videos)}`);
+    log.info(`🔍 页面内容：开始处理视频块...`);
+    log.info(`🔍 页面内容：parsedData.video: ${parsedData.video}`);
+    log.info(`🔍 页面内容：parsedData.video_download_url: ${parsedData.video_download_url}`);
+    log.info(`🔍 页面内容：parsedData.videos: ${JSON.stringify(parsedData.videos)}`);
 
     // 检查是否为真正的Live图（不仅仅是多个视频URL）
     const isLive = isLivePhoto(parsedData);
     if (isLive && parsedData.videos && Array.isArray(parsedData.videos) && parsedData.videos.length > 1) {
-      console.log(`📸 Live图内容: 添加 ${parsedData.videos.length} 个视频到页面内容`);
+      log.info(`📸 Live图内容: 添加 ${parsedData.videos.length} 个视频到页面内容`);
 
       // 去重处理
       const uniqueVideos = [...new Set(parsedData.videos)];
-      console.log(`📸 页面内容：去重后的Live图视频: ${uniqueVideos.length} 个`);
+      log.info(`📸 页面内容：去重后的Live图视频: ${uniqueVideos.length} 个`);
 
       // 添加Live图说明
       const livePhotoHeader: NotionParagraphBlock = {
@@ -778,7 +779,7 @@ function createPageBlocks(parsedData: ParsedData, contentType: ContentType): Not
 
       // 为每个视频创建嵌入块（显示所有视频）
       uniqueVideos.forEach((videoUrl, index) => {
-        console.log(`添加Live图视频 ${index + 1}/${uniqueVideos.length}: ${videoUrl}`);
+        log.info(`添加Live图视频 ${index + 1}/${uniqueVideos.length}: ${videoUrl}`);
 
         // 只创建视频嵌入块，不创建额外的链接块
         const videoBlock = createVideoBlock(videoUrl);
@@ -793,20 +794,20 @@ function createPageBlocks(parsedData: ParsedData, contentType: ContentType): Not
 
       // 检查视频URL是否有效
       if (!finalVideoUrl || finalVideoUrl === 'undefined' || typeof finalVideoUrl !== 'string') {
-        console.error('❌ 页面内容：视频URL无效，跳过视频块创建:', finalVideoUrl);
-        console.error('❌ parsedData.video_download_url:', parsedData.video_download_url);
-        console.error('❌ parsedData.video:', parsedData.video);
+        log.error('❌ 页面内容：视频URL无效，跳过视频块创建:', finalVideoUrl);
+        log.error('❌ parsedData.video_download_url:', parsedData.video_download_url);
+        log.error('❌ parsedData.video:', parsedData.video);
       } else {
         // 视频链接应该已经是处理后的图床链接
-        console.log('🎬 页面内容：使用处理后的视频链接同步到Notion:', finalVideoUrl);
+        log.info('🎬 页面内容：使用处理后的视频链接同步到Notion:', finalVideoUrl);
 
         // 创建视频嵌入块（视频笔记只需要嵌入块，不需要额外的链接）
         const videoBlock = createVideoBlock(finalVideoUrl);
         if (videoBlock) {
           children.push(videoBlock);
-          console.log('✅ 页面内容：视频笔记已添加视频嵌入块');
+          log.info('✅ 页面内容：视频笔记已添加视频嵌入块');
         } else {
-          console.log('❌ 页面内容：视频笔记视频嵌入块创建失败');
+          log.info('❌ 页面内容：视频笔记视频嵌入块创建失败');
         }
       }
     }
@@ -843,12 +844,12 @@ function createPageBlocks(parsedData: ParsedData, contentType: ContentType): Not
  * @returns 视频块或null
  */
 function createVideoBlock(videoUrl: string): NotionVideoBlock | null {
-  console.log('创建视频块:', videoUrl);
+  log.info('创建视频块:', videoUrl);
 
   try {
     // 检查URL是否有效
     if (!videoUrl || videoUrl === 'undefined' || typeof videoUrl !== 'string') {
-      console.error('❌ 视频URL无效:', videoUrl);
+      log.error('❌ 视频URL无效:', videoUrl);
       return null;
     }
 
@@ -863,11 +864,11 @@ function createVideoBlock(videoUrl: string): NotionVideoBlock | null {
         // 直接添加.mp4扩展名
         processedUrl = `${processedUrl}.mp4`;
       }
-      console.log('添加.mp4扩展名后的URL:', processedUrl);
+      log.info('添加.mp4扩展名后的URL:', processedUrl);
     }
 
     // 使用嵌入块处理视频
-    console.log('使用嵌入块处理视频:', processedUrl);
+    log.info('使用嵌入块处理视频:', processedUrl);
     return {
       object: "block",
       type: "embed",
@@ -876,7 +877,7 @@ function createVideoBlock(videoUrl: string): NotionVideoBlock | null {
       }
     };
   } catch (error) {
-    console.error('创建视频块失败:', error);
+    log.error('创建视频块失败:', error);
     return null;
   }
 }
@@ -893,9 +894,9 @@ async function createNotionPage(
   children: NotionBlock[] = [],
   databaseId: string
 ): Promise<NotionApiResponse> {
-  console.log('🔍 开始创建Notion页面...');
-  console.log('📊 数据库ID:', databaseId);
-  console.log('📋 页面属性:', JSON.stringify(properties, null, 2));
+  log.info('🔍 开始创建Notion页面...');
+  log.info('📊 数据库ID:', databaseId);
+  log.info('📋 页面属性:', JSON.stringify(properties, null, 2));
 
   const requestBody: any = {
     parent: {
@@ -907,11 +908,11 @@ async function createNotionPage(
   // 如果有内容块，添加到请求体
   if (children.length > 0) {
     requestBody.children = children;
-    console.log('📝 页面内容块数量:', children.length);
+    log.info('📝 页面内容块数量:', children.length);
   }
 
-  console.log('🚀 发送Notion API请求...');
-  console.log('📤 请求体:', JSON.stringify(requestBody, null, 2));
+  log.info('🚀 发送Notion API请求...');
+  log.info('📤 请求体:', JSON.stringify(requestBody, null, 2));
 
   const response = await fetch('https://api.notion.com/v1/pages', {
     method: 'POST',
@@ -923,18 +924,18 @@ async function createNotionPage(
     body: JSON.stringify(requestBody)
   });
 
-  console.log('📊 Notion API响应状态:', response.status, response.statusText);
+  log.info('📊 Notion API响应状态:', response.status, response.statusText);
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error('❌ Notion API错误响应:', errorText);
+    log.error('❌ Notion API错误响应:', errorText);
     throw new Error(`Notion API 错误 (${response.status}): ${errorText}`);
   }
 
   const responseData = await response.json() as NotionApiResponse;
-  console.log('✅ Notion页面创建成功!');
-  console.log('📝 页面ID:', responseData.id);
-  console.log('🔗 页面URL:', `https://notion.so/${responseData.id.replace(/-/g, '')}`);
+  log.info('✅ Notion页面创建成功!');
+  log.info('📝 页面ID:', responseData.id);
+  log.info('🔗 页面URL:', `https://notion.so/${responseData.id.replace(/-/g, '')}`);
 
   return responseData;
 }
@@ -948,11 +949,11 @@ async function createNotionPage(
  */
 async function addMediaToPage(pageId: string, mediaUrls: string[], propertyName: string, isLivePhoto: boolean = false): Promise<void> {
   try {
-    console.log(`开始添加${propertyName}到 Notion 页面...`);
-    console.log(`媒体URL列表:`, mediaUrls);
+    log.info(`开始添加${propertyName}到 Notion 页面...`);
+    log.info(`媒体URL列表:`, mediaUrls);
 
     if (!mediaUrls || mediaUrls.length === 0) {
-      console.log(`没有${propertyName}需要添加`);
+      log.info(`没有${propertyName}需要添加`);
       return;
     }
 
@@ -982,7 +983,7 @@ async function addMediaToPage(pageId: string, mediaUrls: string[], propertyName:
       };
     });
 
-    console.log(`准备更新页面属性，文件数量: ${files.length}`);
+    log.info(`准备更新页面属性，文件数量: ${files.length}`);
 
     // 直接更新页面属性，使用外部URL
     const response = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
@@ -1007,10 +1008,10 @@ async function addMediaToPage(pageId: string, mediaUrls: string[], propertyName:
     }
 
     const result = await response.json();
-    console.log(`添加${propertyName}到 Notion 页面完成`, result.id);
+    log.info(`添加${propertyName}到 Notion 页面完成`, result.id);
 
   } catch (error) {
-    console.error(`添加${propertyName}到 Notion 页面失败:`, error);
+    log.error(`添加${propertyName}到 Notion 页面失败:`, error);
     // 不抛出错误，让流程继续
   }
 }
@@ -1022,13 +1023,13 @@ async function addMediaToPage(pageId: string, mediaUrls: string[], propertyName:
  */
 async function setPageCover(pageId: string, coverUrl: string): Promise<void> {
   try {
-    console.log(`🖼️ 开始设置页面封面...`);
-    console.log(`📝 页面ID: ${pageId}`);
-    console.log(`🔗 封面URL: ${coverUrl}`);
+    log.info(`🖼️ 开始设置页面封面...`);
+    log.info(`📝 页面ID: ${pageId}`);
+    log.info(`🔗 封面URL: ${coverUrl}`);
 
     // 验证URL格式
     if (!coverUrl || !coverUrl.startsWith('http')) {
-      console.error(`❌ 封面URL格式无效: ${coverUrl}`);
+      log.error(`❌ 封面URL格式无效: ${coverUrl}`);
       return;
     }
 
@@ -1041,7 +1042,7 @@ async function setPageCover(pageId: string, coverUrl: string): Promise<void> {
       }
     };
 
-    console.log(`📤 封面设置请求体:`, JSON.stringify(requestBody, null, 2));
+    log.info(`📤 封面设置请求体:`, JSON.stringify(requestBody, null, 2));
 
     const response = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
       method: 'PATCH',
@@ -1053,22 +1054,22 @@ async function setPageCover(pageId: string, coverUrl: string): Promise<void> {
       body: JSON.stringify(requestBody)
     });
 
-    console.log(`📊 封面设置响应状态: ${response.status} ${response.statusText}`);
+    log.info(`📊 封面设置响应状态: ${response.status} ${response.statusText}`);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`❌ 设置页面封面失败 (${response.status}): ${errorText}`);
-      console.error(`🔍 失败的封面URL: ${coverUrl}`);
+      log.error(`❌ 设置页面封面失败 (${response.status}): ${errorText}`);
+      log.error(`🔍 失败的封面URL: ${coverUrl}`);
       return;
     }
 
     const responseData = await response.json();
-    console.log('✅ 页面封面设置成功!');
-    console.log(`🎯 封面已设置为: ${coverUrl}`);
+    log.info('✅ 页面封面设置成功!');
+    log.info(`🎯 封面已设置为: ${coverUrl}`);
 
   } catch (error) {
-    console.error('❌ 设置页面封面异常:', error);
-    console.error(`🔍 异常时的封面URL: ${coverUrl}`);
+    log.error('❌ 设置页面封面异常:', error);
+    log.error(`🔍 异常时的封面URL: ${coverUrl}`);
     // 不抛出错误，让流程继续
   }
 }

@@ -10,6 +10,7 @@
 
 import { processMediaFile } from './media.js';
 import { fetchWithTimeout } from './utils.js';
+import { log } from './logger.js';
 
 // ==================== 类型定义 ====================
 
@@ -224,17 +225,17 @@ export class DouyinParser {
    * @example
    * // 基本使用
    * const result = await parser.parse('https://v.douyin.com/RZiYuRoAlFM/');
-   * console.log(result.title); // 视频标题
-   * console.log(result.author.name); // 作者名称
-   * console.log(result.video); // 视频下载链接
-   * 
+   * log.info(result.title); // 视频标题
+   * log.info(result.author.name); // 作者名称
+   * log.info(result.video); // 视频下载链接
+   *
    * @example
    * // 错误处理
    * try {
    *   const result = await parser.parse(url);
    * } catch (error) {
    *   if (error instanceof DouyinParseError) {
-   *     console.error('解析错误:', error.code, error.message);
+   *     log.error('解析错误:', error.code, error.message);
    *   }
    * }
    */
@@ -820,8 +821,8 @@ export class DouyinParser {
           ...data
         };
 
-        const logMethod = (console as any)[level] || console.log;
-        logMethod(`[${level.toUpperCase()}] ${message}`, logData);
+        const logMethod = (log as any)[level] || log.info;
+        logMethod(`${message}`, logData);
       }
     };
   }
@@ -1186,9 +1187,9 @@ const defaultParser = new DouyinParser();
  * import { parseDouyin } from './douyinParser.js';
  *
  * const result = await parseDouyin('https://v.douyin.com/RZiYuRoAlFM/');
- * console.log(result.title); // 视频标题
- * console.log(result.author.name); // 作者名称
- * console.log(result.video); // 视频下载链接
+ * log.info(result.title); // 视频标题
+ * log.info(result.author.name); // 作者名称
+ * log.info(result.video); // 视频下载链接
  *
  * @since 1.0.0
  */

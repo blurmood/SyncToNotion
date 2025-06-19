@@ -8,6 +8,7 @@
  */
 
 import { PROXY_CONFIG } from './config.js';
+import { log } from './logger.js';
 
 // ==================== 类型定义 ====================
 
@@ -73,7 +74,7 @@ export function detectPlatform(url: string): PlatformInfo {
     };
     
   } catch (error) {
-    console.warn('URL平台检测失败:', error);
+    log.warn('URL平台检测失败:', error);
     return {
       platform: 'unknown',
       supportsProxy: false
@@ -143,7 +144,7 @@ export function extractBackupUrls(parseData: any): string[] {
     return [...new Set(backupUrls)];
     
   } catch (error) {
-    console.warn('提取备用URL失败:', error);
+    log.warn('提取备用URL失败:', error);
     return [];
   }
 }
@@ -180,7 +181,7 @@ export function createProxyUrl(originalUrl: string, parseData?: any): string {
     const platformInfo = detectPlatform(originalUrl);
     
     if (!platformInfo.supportsProxy) {
-      console.warn(`平台 ${platformInfo.platform} 不支持代理，返回原始URL`);
+      log.warn(`平台 ${platformInfo.platform} 不支持代理，返回原始URL`);
       return originalUrl;
     }
     
@@ -209,12 +210,12 @@ export function createProxyUrl(originalUrl: string, parseData?: any): string {
     // 构建代理URL
     const proxyUrl = `${PROXY_CONFIG.WORKER_URL}/proxy/${PROXY_CONFIG.VERSION}/${encodedMetadata}`;
 
-    console.log(`✅ 生成代理URL: ${platformInfo.platform} -> ${proxyUrl.substring(0, 100)}...`);
+    log.success(`生成代理URL: ${platformInfo.platform} -> ${proxyUrl.substring(0, 100)}...`);
     
     return proxyUrl;
     
   } catch (error) {
-    console.error('创建代理URL失败:', error);
+    log.error('创建代理URL失败:', error);
     return originalUrl; // 失败时返回原始URL
   }
 }
@@ -246,7 +247,7 @@ export function parseProxyUrl(proxyUrl: string): ProxyMetadata | null {
     return metadata;
     
   } catch (error) {
-    console.error('解析代理URL失败:', error);
+    log.error('解析代理URL失败:', error);
     return null;
   }
 }
@@ -270,7 +271,7 @@ export function validateProxyUrl(proxyUrl: string, maxAge: number = 24 * 60 * 60
     const age = now - metadata.timestamp;
     
     if (age > maxAge) {
-      console.warn(`代理URL已过期: ${age}ms > ${maxAge}ms`);
+      log.warn(`代理URL已过期: ${age}ms > ${maxAge}ms`);
       return false;
     }
     
@@ -280,7 +281,7 @@ export function validateProxyUrl(proxyUrl: string, maxAge: number = 24 * 60 * 60
       const expectedSignature = generateSignature(dataToSign);
       
       if (metadata.signature !== expectedSignature) {
-        console.warn('代理URL签名验证失败');
+        log.warn('代理URL签名验证失败');
         return false;
       }
     }
@@ -288,7 +289,7 @@ export function validateProxyUrl(proxyUrl: string, maxAge: number = 24 * 60 * 60
     return true;
     
   } catch (error) {
-    console.error('验证代理URL失败:', error);
+    log.error('验证代理URL失败:', error);
     return false;
   }
 }

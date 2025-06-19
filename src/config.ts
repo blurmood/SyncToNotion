@@ -81,6 +81,44 @@ export interface ProxyConfig {
   readonly SIZE_THRESHOLD: number;
 }
 
+/** 媒体处理配置接口 */
+export interface MediaProcessingConfig {
+  /** 延迟配置 */
+  readonly DELAYS: {
+    /** 批次间延迟（毫秒） */
+    readonly BATCH_INTERVAL: number;
+    /** 图片间延迟（毫秒） */
+    readonly IMAGE_INTERVAL: number;
+    /** 视频间延迟（毫秒） */
+    readonly VIDEO_INTERVAL: number;
+    /** Live图视频间延迟（毫秒） */
+    readonly LIVE_PHOTO_INTERVAL: number;
+  };
+  /** 批次大小配置 */
+  readonly BATCH_SIZES: {
+    /** 图片批次大小 */
+    readonly IMAGES: number;
+    /** 视频批次大小 */
+    readonly VIDEOS: number;
+  };
+  /** 超时配置 */
+  readonly TIMEOUTS: {
+    /** 单个图片处理超时（毫秒） */
+    readonly PER_IMAGE: number;
+    /** 总处理超时（毫秒） */
+    readonly TOTAL_MAX: number;
+    /** 网络请求超时（毫秒） */
+    readonly NETWORK: number;
+  };
+  /** 文件大小限制 */
+  readonly SIZE_LIMITS: {
+    /** 图床文件大小阈值（字节） */
+    readonly IMAGE_HOST_THRESHOLD: number;
+    /** CDN代理文件大小阈值（字节） */
+    readonly PROXY_THRESHOLD: number;
+  };
+}
+
 // ==================== 配置实例 ====================
 
 /** R2存储配置 */
@@ -169,6 +207,47 @@ export const PROXY_CONFIG: ProxyConfig = {
   SIZE_THRESHOLD: 100 * 1024 * 1024
 } as const;
 
+/** 媒体处理配置 */
+export const MEDIA_PROCESSING_CONFIG: MediaProcessingConfig = {
+  // 延迟配置（毫秒）
+  DELAYS: {
+    // 批次间延迟，让系统有时间释放资源
+    BATCH_INTERVAL: 300,
+    // 图片间延迟，避免请求过于密集
+    IMAGE_INTERVAL: 100,
+    // 视频间延迟，避免请求过于密集
+    VIDEO_INTERVAL: 200,
+    // Live图视频间延迟，避免请求过于密集
+    LIVE_PHOTO_INTERVAL: 200
+  },
+
+  // 批次大小配置
+  BATCH_SIZES: {
+    // 图片批次大小，避免subrequest过多
+    IMAGES: 12,
+    // 视频批次大小，避免subrequest过多
+    VIDEOS: 8
+  },
+
+  // 超时配置（毫秒）
+  TIMEOUTS: {
+    // 单个图片处理超时：30秒
+    PER_IMAGE: 30000,
+    // 总处理超时：5分钟
+    TOTAL_MAX: 300000,
+    // 网络请求超时：30秒
+    NETWORK: 30000
+  },
+
+  // 文件大小限制（字节）
+  SIZE_LIMITS: {
+    // 图床文件大小阈值：19MB
+    IMAGE_HOST_THRESHOLD: 19 * 1024 * 1024,
+    // CDN代理文件大小阈值：110MB
+    PROXY_THRESHOLD: 110 * 1024 * 1024
+  }
+} as const;
+
 // ==================== 工具函数 ====================
 
 /**
@@ -203,4 +282,4 @@ export function getEnvNumber(key: string, defaultValue: number): number {
   return value ? parseInt(value, 10) : defaultValue;
 }
 
-// 类型已在上面通过interface导出，无需重复导出
+// 所有类型已通过interface关键字导出，无需重复导出

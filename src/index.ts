@@ -15,6 +15,7 @@ import { generateResponse, handleError, extractXiaohongshuLink, extractDouyinLin
 import { KV_CONFIG, IMAGE_HOST_CONFIG } from './config.js';
 import { imageHostService } from './imageHost.js';
 import { syncToNotion, type ParsedData, type SyncResult } from './notionSync.js';
+import { log } from './logger.js';
 
 // ==================== 类型定义 ====================
 
@@ -309,11 +310,11 @@ function mergeAllTags(parsedData: ProcessedMediaData, customTags: string[], plat
  */
 function initImageHostConfig(env: WorkerEnv): void {
   if (env.IMAGE_HOST_USERNAME && env.IMAGE_HOST_PASSWORD) {
-    console.log(`使用环境变量中的图床凭据: ${env.IMAGE_HOST_USERNAME}`);
+    log.config(`使用环境变量中的图床凭据: ${env.IMAGE_HOST_USERNAME}`);
     IMAGE_HOST_CONFIG.AUTH.USERNAME = env.IMAGE_HOST_USERNAME;
     IMAGE_HOST_CONFIG.AUTH.PASSWORD = env.IMAGE_HOST_PASSWORD;
   } else {
-    console.log(`使用默认图床凭据: ${IMAGE_HOST_CONFIG.AUTH.USERNAME}`);
+    log.config(`使用默认图床凭据: ${IMAGE_HOST_CONFIG.AUTH.USERNAME}`);
   }
 }
 
@@ -324,11 +325,11 @@ function initImageHostConfig(env: WorkerEnv): void {
 function prefetchImageHostToken(ctx: ExecutionContext): void {
   ctx.waitUntil((async () => {
     try {
-      console.log('预获取图床令牌...');
+      log.config('预获取图床令牌...');
       const token = await imageHostService.getToken();
-      console.log('图床令牌预获取成功');
+      log.success('图床令牌预获取成功');
     } catch (error) {
-      console.error('预获取图床令牌失败:', error);
+      log.error('预获取图床令牌失败:', error);
     }
   })());
 }
@@ -510,18 +511,18 @@ router.get('/parse', async (request: Request, env: WorkerEnv, ctx: ExecutionCont
     // 处理媒体文件（异步）
     ctx.waitUntil((async () => {
       try {
-        console.log('开始处理媒体文件...');
+        log.media('开始处理媒体文件...');
         const processedData = await handleMediaFiles(parsedData as any, null, env);
-        console.log('媒体文件处理完成，保存到缓存');
+        log.success('媒体文件处理完成，保存到缓存');
 
         // 保存到缓存
         processedData._timestamp = new Date().toISOString();
         await env.CACHE_KV.put(cacheKey, JSON.stringify(processedData), {
           expirationTtl: KV_CONFIG.CACHE_TTL
         });
-        console.log('数据已保存到缓存');
+        log.cache('数据已保存到缓存');
       } catch (error) {
-        console.error('处理媒体文件或缓存数据失败:', error);
+        log.error('处理媒体文件或缓存数据失败:', error);
       }
     })());
 
@@ -543,16 +544,16 @@ router.get('/parse', async (request: Request, env: WorkerEnv, ctx: ExecutionCont
  */
 router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> => {
   try {
-    console.log('收到同步到Notion请求');
+    log.sync('收到同步到Notion请求');
     const url = new URL(request.url);
     let xhsUrl = url.searchParams.get('url');
     const adminKey = url.searchParams.get('key');
 
-    console.log('原始URL参数:', xhsUrl);
+    log.debug('原始URL参数:', xhsUrl);
 
     // 验证管理员权限
     if (!validateAdminKey(adminKey, env)) {
-      console.log('验证失败: 管理员密钥不匹配');
+      log.warn('验证失败: 管理员密钥不匹配');
       const errorResponse: ErrorResponse = {
         error: true,
         message: '未授权',
@@ -563,7 +564,7 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
 
     // 验证输入
     if (!xhsUrl) {
-      console.log('验证失败: 缺少url参数');
+      log.warn('验证失败: 缺少url参数');
       const errorResponse: ErrorResponse = {
         error: true,
         message: '缺少 url 参数',
@@ -574,13 +575,13 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
 
     // 尝试从文本中提取小红书链接
     if (!xhsUrl.startsWith('http://') && !xhsUrl.startsWith('https://')) {
-      console.log('输入不是URL，尝试从文本中提取链接');
+      log.parse('输入不是URL，尝试从文本中提取链接');
       const extractedLink = extractXiaohongshuLink(xhsUrl);
       if (extractedLink) {
-        console.log(`从文本中提取到小红书链接: ${extractedLink}`);
+        log.success(`从文本中提取到小红书链接: ${extractedLink}`);
         xhsUrl = extractedLink;
       } else {
-        console.log('未找到有效的小红书链接');
+        log.warn('未找到有效的小红书链接');
         const errorResponse: ErrorResponse = {
           error: true,
           message: '未找到有效的小红书链接',
@@ -590,13 +591,13 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
         return generateResponse(errorResponse, 400);
       }
     } else if (!xhsUrl.includes('xiaohongshu.com') && !xhsUrl.includes('xhslink.com')) {
-      console.log('URL不是小红书链接，尝试从文本中提取链接');
+      log.parse('URL不是小红书链接，尝试从文本中提取链接');
       const extractedLink = extractXiaohongshuLink(xhsUrl);
       if (extractedLink) {
-        console.log(`从文本中提取到小红书链接: ${extractedLink}`);
+        log.success(`从文本中提取到小红书链接: ${extractedLink}`);
         xhsUrl = extractedLink;
       } else {
-        console.log('未找到有效的小红书链接');
+        log.warn('未找到有效的小红书链接');
         const errorResponse: ErrorResponse = {
           error: true,
           message: '未找到有效的小红书链接',
@@ -607,7 +608,7 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
       }
     }
 
-    console.log('处理的链接:', xhsUrl);
+    log.info('处理的链接:', xhsUrl);
 
     // 检查缓存中是否有处理好的数据
     const cacheKey = `xhs:${xhsUrl}`;
@@ -632,7 +633,7 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
           Object.assign(parsedData, processedData);
 
         } catch (mediaError) {
-          console.error('媒体文件处理失败:', mediaError);
+          log.failure('媒体文件处理失败', mediaError);
           throw new Error(`媒体文件处理失败: ${mediaError instanceof Error ? mediaError.message : String(mediaError)}`);
         }
 
@@ -642,7 +643,7 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
           expirationTtl: KV_CONFIG.CACHE_TTL
         });
       } catch (parseError) {
-        console.error('解析小红书内容失败:', parseError);
+        log.failure('解析小红书内容失败', parseError);
         const errorResponse: ErrorResponse = {
           error: true,
           message: '解析小红书内容失败',
@@ -655,17 +656,17 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
     }
 
     // 同步到 Notion
-    console.log('开始同步到 Notion...');
+    log.sync('开始同步到 Notion...');
     try {
       const notionResponse = await syncToNotion(parsedData as ParsedData, {
         kv: env.CACHE_KV,
         originalUrl: xhsUrl,
         platform: '小红书'
       });
-      console.log('同步到Notion成功');
+      log.success('同步到Notion成功');
 
       // 视频已在同步处理中完成，无需异步处理
-      console.log('所有媒体文件（包括视频）已同步处理完成');
+      log.success('所有媒体文件（包括视频）已同步处理完成');
 
       // 获取所有应用的标签（系统标签 + 自定义标签）
       const allTags = mergeAllTags(parsedData, []);
@@ -686,7 +687,7 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
 
       return generateResponse(syncResponse);
     } catch (notionError) {
-      console.error('同步到Notion失败:', notionError);
+      log.failure('同步到Notion失败', notionError);
       const errorResponse: ErrorResponse = {
         error: true,
         message: '同步到Notion失败',
@@ -698,7 +699,7 @@ router.get('/sync-to-notion', async (request: Request, env: WorkerEnv, ctx: Exec
     }
 
   } catch (error) {
-    console.error('同步到 Notion 失败:', error);
+    log.failure('同步到 Notion 失败', error);
     return handleError(error);
   }
 });
@@ -711,10 +712,10 @@ router.get('/admin/refresh-token', async (request: Request, env: WorkerEnv): Pro
     const url = new URL(request.url);
     const adminKey = url.searchParams.get('key');
 
-    console.log('收到令牌刷新请求');
+    log.info('收到令牌刷新请求');
 
     if (!validateAdminKey(adminKey, env)) {
-      console.log('管理员验证失败');
+      log.info('管理员验证失败');
       const errorResponse: ErrorResponse = {
         error: true,
         message: '未授权',
@@ -723,7 +724,7 @@ router.get('/admin/refresh-token', async (request: Request, env: WorkerEnv): Pro
       return generateResponse(errorResponse, 401);
     }
 
-    console.log('管理员验证成功，开始刷新令牌');
+    log.info('管理员验证成功，开始刷新令牌');
 
     // 强制刷新图床令牌
     (imageHostService as any).token = null;
@@ -731,7 +732,7 @@ router.get('/admin/refresh-token', async (request: Request, env: WorkerEnv): Pro
 
     try {
       const newToken = await imageHostService.getToken();
-      console.log('令牌刷新成功');
+      log.info('令牌刷新成功');
 
       const refreshResponse: TokenRefreshResponse = {
         message: '令牌已刷新',
@@ -740,7 +741,7 @@ router.get('/admin/refresh-token', async (request: Request, env: WorkerEnv): Pro
 
       return generateResponse(refreshResponse);
     } catch (tokenError) {
-      console.error('刷新令牌失败:', tokenError);
+      log.error('刷新令牌失败:', tokenError);
       const errorResponse: ErrorResponse = {
         error: true,
         message: '刷新令牌失败',
@@ -750,7 +751,7 @@ router.get('/admin/refresh-token', async (request: Request, env: WorkerEnv): Pro
       return generateResponse(errorResponse, 500);
     }
   } catch (error) {
-    console.error('令牌刷新端点错误:', error);
+    log.error('令牌刷新端点错误:', error);
     return handleError(error);
   }
 });
@@ -760,11 +761,11 @@ router.get('/admin/refresh-token', async (request: Request, env: WorkerEnv): Pro
  */
 router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> => {
   try {
-    console.log(`🚀 [${new Date().toISOString()}] 收到从文本同步到Notion请求`);
+    log.info(`🚀 [${new Date().toISOString()}] 收到从文本同步到Notion请求`);
 
     // 解析请求体
     const contentType = request.headers.get('content-type') || '';
-    console.log('Content-Type:', contentType);
+    log.info('Content-Type:', contentType);
 
     let text = '';
     let adminKey = '';
@@ -792,7 +793,7 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         formData.forEach((value, key) => {
           formEntries.push(`${key}=${value}`);
         });
-        console.log('请求体 (FormData):', formEntries.join(', '));
+        log.info('请求体 (FormData):', formEntries.join(', '));
         text = formData.get('text')?.toString() || '';
         adminKey = formData.get('key')?.toString() || '';
 
@@ -800,9 +801,9 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         const tagsValue = formData.get('tags')?.toString() || '';
         customTags = processCustomTags(tagsValue);
 
-        console.log('处理后的自定义标签:', customTags);
+        log.info('处理后的自定义标签:', customTags);
       } catch (formError) {
-        console.error('解析表单数据失败:', formError);
+        log.error('解析表单数据失败:', formError);
         const errorResponse: ErrorResponse = {
           error: true,
           message: '无效的表单数据',
@@ -813,12 +814,12 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
       }
     }
 
-    console.log(`📝 [${new Date().toISOString()}] 提取的文本:`, text);
-    console.log(`🔑 [${new Date().toISOString()}] 提取的密钥:`, adminKey ? '已提供' : '未提供');
+    log.info(`📝 [${new Date().toISOString()}] 提取的文本:`, text);
+    log.info(`🔑 [${new Date().toISOString()}] 提取的密钥:`, adminKey ? '已提供' : '未提供');
 
     // 验证管理员权限
     if (!validateAdminKey(adminKey, env)) {
-      console.log(`❌ [${new Date().toISOString()}] 验证失败: 管理员密钥不匹配`);
+      log.info(`❌ [${new Date().toISOString()}] 验证失败: 管理员密钥不匹配`);
       const errorResponse: ErrorResponse = {
         error: true,
         message: '未授权',
@@ -829,7 +830,7 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
 
     // 验证输入
     if (!text) {
-      console.log(`❌ [${new Date().toISOString()}] 验证失败: 缺少文本内容`);
+      log.info(`❌ [${new Date().toISOString()}] 验证失败: 缺少文本内容`);
       const errorResponse: ErrorResponse = {
         error: true,
         message: '缺少文本内容',
@@ -881,7 +882,7 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         }
 
         // 处理所有媒体文件（图片、封面、视频）
-        console.log(`🎬 [${new Date().toISOString()}] 开始处理所有媒体文件...`);
+        log.info(`🎬 [${new Date().toISOString()}] 开始处理所有媒体文件...`);
 
         // 设置图床服务的环境变量
         imageHostService.setEnv(env);
@@ -893,8 +894,8 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
           // 更新parsedData为处理后的数据
           Object.assign(parsedData, processedData);
 
-          console.log(`✅ [${new Date().toISOString()}] 所有媒体文件处理成功，可以同步到Notion`);
-          console.log(`📊 [${new Date().toISOString()}] 处理后的数据:`, {
+          log.info(`✅ [${new Date().toISOString()}] 所有媒体文件处理成功，可以同步到Notion`);
+          log.info(`📊 [${new Date().toISOString()}] 处理后的数据:`, {
             cover: parsedData.cover ? '已处理' : '无',
             images: parsedData.images ? parsedData.images.length : 0,
             video: parsedData.video ? '已处理' : '无'
@@ -920,7 +921,7 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         return generateResponse(errorResponse, 500);
       }
     } else {
-      console.log(`💾 [${new Date().toISOString()}] 使用缓存中的已处理数据`);
+      log.info(`💾 [${new Date().toISOString()}] 使用缓存中的已处理数据`);
 
       // 如果有新的自定义标签，添加到现有数据中
       if (customTags.length > 0) {
@@ -935,12 +936,12 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         }
 
         parsedData.custom_tags = mergedTags;
-        console.log(`🏷️ [${new Date().toISOString()}] 合并自定义标签:`, mergedTags);
+        log.info(`🏷️ [${new Date().toISOString()}] 合并自定义标签:`, mergedTags);
       }
     }
 
     // 同步到 Notion
-    console.log(`📝 [${new Date().toISOString()}] 开始同步到 Notion...`);
+    log.info(`📝 [${new Date().toISOString()}] 开始同步到 Notion...`);
     try {
       const notionResponse = await syncToNotion(parsedData as ParsedData, {
         kv: env.CACHE_KV,
@@ -950,7 +951,7 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
 
       // 检查同步是否成功
       if (!notionResponse.success) {
-        console.error(`❌ [${new Date().toISOString()}] 同步到Notion失败:`, notionResponse.error);
+        log.error(`❌ [${new Date().toISOString()}] 同步到Notion失败:`, notionResponse.error);
         const errorResponse: ErrorResponse = {
           error: true,
           message: '同步到Notion失败',
@@ -961,7 +962,7 @@ router.post('/sync-from-text', async (request: Request, env: WorkerEnv, ctx: Exe
         return generateResponse(errorResponse, 500);
       }
 
-      console.log(`✅ [${new Date().toISOString()}] 同步到Notion成功`);
+      log.info(`✅ [${new Date().toISOString()}] 同步到Notion成功`);
 
       // 获取所有应用的标签（系统标签 + 自定义标签）
       const allTags = mergeAllTags(parsedData, customTags, platform);
@@ -1028,8 +1029,6 @@ router.all('*', (): Response => {
 export default {
   async fetch(request: Request, env: WorkerEnv, ctx: ExecutionContext): Promise<Response> {
     try {
-      // R2绑定初始化已删除
-
       // 设置CORS头
       const corsHeaders = {
         'Access-Control-Allow-Origin': '*',
@@ -1057,10 +1056,8 @@ export default {
       return response;
 
     } catch (error) {
-      console.error('全局错误处理:', error);
+      log.error('全局错误处理:', error);
       return handleError(error);
     }
   }
 };
-
-// 类型已通过interface导出，无需重复导出

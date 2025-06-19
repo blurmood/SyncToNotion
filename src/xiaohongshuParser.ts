@@ -2,11 +2,13 @@
  * 小红书链接解析器 - TypeScript版本
  * 专为Cloudflare Workers环境优化，具有完整的类型安全
  * 支持解析小红书短链接和完整链接
- * 
+ *
  * @fileoverview 小红书内容解析器，支持图文和视频内容
  * @author Augment Agent
  * @version 3.0.0 (TypeScript)
  */
+
+import { log } from './logger.js';
 
 // ==================== 类型定义 ====================
 
@@ -359,7 +361,7 @@ function extractImages(html: string): string[] {
   const images: string[] = [];
   const ogImagePatterns = PATTERNS.ogImage;
 
-  console.log('🔍 开始提取图片，调试正则表达式匹配结果...');
+  log.parse('开始提取图片，调试正则表达式匹配结果...');
 
   let totalMatchCount = 0;
 
@@ -742,7 +744,7 @@ export async function parseXiaohongshuLink(
     };
 
     // 使用新的智能分析系统
-    console.log('🔍 开始智能分析媒体内容...');
+    log.parse('开始智能分析媒体内容...');
     const extractedData = extractAllJsonData(html);
     const mediaAnalysis = analyzeMediaStructure(extractedData);
 
@@ -760,19 +762,19 @@ export async function parseXiaohongshuLink(
     if (allVideos.length > 0 || mediaAnalysis.livePhotoGroups > 0) {
       // 优先使用URL参数的判断结果，避免误判
       if (result.contentType === 'video' && !isLivePhoto) {
-        console.log(`🎬 URL参数明确指定为视频内容 (type=video)，跳过Live图分析`);
+        log.media(`URL参数明确指定为视频内容 (type=video)，跳过Live图分析`);
 
         // 视频内容处理逻辑：只保留主视频
         result.video = allVideos[0];
         result.videos = [allVideos[0]]; // 视频内容只保留一个主视频
 
-        console.log(`🎬 视频内容处理：主视频 = ${result.video}`);
-        console.log(`🎬 过滤掉 ${allVideos.length - 1} 个额外视频，只保留主视频`);
+        log.media(`视频内容处理：主视频 = ${result.video}`);
+        log.media(`过滤掉 ${allVideos.length - 1} 个额外视频，只保留主视频`);
 
         // 普通视频内容优化：封面图片单独处理，不放入图片列表
         if (result.images.length > 0) {
           const originalImageCount = result.images.length;
-          console.log(`🎬 检测到视频内容，原始图片数量: ${originalImageCount}`);
+          log.media(`检测到视频内容，原始图片数量: ${originalImageCount}`);
 
           // 保存第一张图片作为封面，但清空图片列表
           const coverImage = result.images[0];
@@ -783,9 +785,9 @@ export async function parseXiaohongshuLink(
           // 记录原始图片数量用于统计
           result.originalImageCount = originalImageCount;
 
-          console.log(`🎬 视频内容优化完成，封面图片单独保存: ${coverImage}`);
-          console.log(`🎬 清空图片列表，视频笔记不显示图片内容`);
-          console.log(`🎬 过滤掉 ${originalImageCount} 张图片，避免冗余显示`);
+          log.success(`视频内容优化完成，封面图片单独保存: ${coverImage}`);
+          log.media(`清空图片列表，视频笔记不显示图片内容`);
+          log.media(`过滤掉 ${originalImageCount} 张图片，避免冗余显示`);
         }
 
       } else {
@@ -803,7 +805,7 @@ export async function parseXiaohongshuLink(
         );
 
         if (isRealLivePhoto) {
-        console.log(`📸 智能分析检测到真正的Live图内容: ${mediaAnalysis.livePhotoGroups}组Live图, ${mediaAnalysis.regularImages}张普通图片`);
+        log.livePhoto(`智能分析检测到真正的Live图内容: ${mediaAnalysis.livePhotoGroups}组Live图, ${mediaAnalysis.regularImages}张普通图片`);
 
         // 提取Live图视频
         const livePhotoVideos = extractLivePhotoVideos(extractedData.livePhotoData);
@@ -815,10 +817,10 @@ export async function parseXiaohongshuLink(
         result.isLivePhoto = true;
         result.isGroupedContent = true;
 
-        console.log(`📸 Live图内容设置完成:`);
-        console.log(`📸 - Live图视频: ${livePhotoVideos.length}个`);
-        console.log(`📸 - 图片: ${result.images.length}张`);
-        console.log(`📸 - 总分组: ${mediaAnalysis.livePhotoGroups}组`);
+        log.livePhoto(`Live图内容设置完成:`);
+        log.livePhoto(`- Live图视频: ${livePhotoVideos.length}个`);
+        log.livePhoto(`- 图片: ${result.images.length}张`);
+        log.livePhoto(`- 总分组: ${mediaAnalysis.livePhotoGroups}组`);
 
         // 设置封面
         if (result.images.length > 0) {
@@ -832,7 +834,7 @@ export async function parseXiaohongshuLink(
           // 如果是视频内容，只保留主视频；否则保留所有视频
           if (result.contentType === 'video') {
             result.videos = [allVideos[0]]; // 视频内容只保留一个主视频
-            console.log(`🎬 传统视频处理：只保留主视频，过滤掉 ${allVideos.length - 1} 个额外视频`);
+            log.media(`传统视频处理：只保留主视频，过滤掉 ${allVideos.length - 1} 个额外视频`);
           } else {
             result.videos = allVideos; // 非视频内容保留所有视频
           }
@@ -841,7 +843,7 @@ export async function parseXiaohongshuLink(
             // 普通视频内容优化：封面图片单独处理，不放入图片列表
             if (result.images.length > 0) {
               const originalImageCount = result.images.length;
-              console.log(`🎬 检测到视频内容，原始图片数量: ${originalImageCount}`);
+              log.media(`检测到视频内容，原始图片数量: ${originalImageCount}`);
 
               // 保存第一张图片作为封面，但清空图片列表
               const coverImage = result.images[0];
@@ -852,9 +854,9 @@ export async function parseXiaohongshuLink(
               // 记录原始图片数量用于统计
               result.originalImageCount = originalImageCount;
 
-              console.log(`🎬 视频内容优化完成，封面图片单独保存: ${coverImage}`);
-              console.log(`🎬 清空图片列表，视频笔记不显示图片内容`);
-              console.log(`🎬 过滤掉 ${originalImageCount} 张图片，避免冗余显示`);
+              log.success(`视频内容优化完成，封面图片单独保存: ${coverImage}`);
+              log.media(`清空图片列表，视频笔记不显示图片内容`);
+              log.media(`过滤掉 ${originalImageCount} 张图片，避免冗余显示`);
             }
           }
         }
@@ -956,16 +958,16 @@ export async function parseXiaohongshu(xhsUrl: string, maxRetries: number = 2): 
       throw new Error(extractedData.message || '解析失败');
     }
 
-    console.log(`✅ 解析成功: ${extractedData.title}`);
-    console.log(`📊 内容类型: ${extractedData.contentType}, 图片: ${extractedData.images.length}张, 视频: ${extractedData.video ? 1 : 0}个`);
+    log.success(`解析成功: ${extractedData.title}`);
+    log.info(`内容类型: ${extractedData.contentType}, 图片: ${extractedData.images.length}张, 视频: ${extractedData.video ? 1 : 0}个`);
 
     // 视频内容优化提示
     if (extractedData.contentType === 'video') {
       if (extractedData.coverImage) {
-        console.log(`🎬 视频内容已优化: 封面图片单独处理，图片列表已清空`);
+        log.success(`视频内容已优化: 封面图片单独处理，图片列表已清空`);
       }
       if (extractedData.originalImageCount && extractedData.originalImageCount > 0) {
-        console.log(`🎬 过滤了 ${extractedData.originalImageCount} 张图片，避免在视频笔记中显示`);
+        log.media(`过滤了 ${extractedData.originalImageCount} 张图片，避免在视频笔记中显示`);
       }
     }
 
@@ -1016,7 +1018,7 @@ export async function parseXiaohongshu(xhsUrl: string, maxRetries: number = 2): 
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`❌ 小红书解析失败: ${errorMessage}`);
+    log.failure(`小红书解析失败: ${errorMessage}`);
 
     // 返回错误结果，但保持类型一致
     throw new Error(`小红书内容解析失败: ${errorMessage}`);
@@ -1035,7 +1037,7 @@ function extractTypeFromUrl(url: string): string | null {
     const urlObj = new URL(url);
     return urlObj.searchParams.get('type');
   } catch (error) {
-    console.warn('提取URL参数失败:', error);
+    log.warn('提取URL参数失败:', error);
     return null;
   }
 }
@@ -1090,14 +1092,14 @@ function determineNoteType(finalUrl: string, html: string): {
 } {
   const typeParam = extractTypeFromUrl(finalUrl);
 
-  console.log(`🔍 URL类型参数检测:`, {
+  log.parse(`URL类型参数检测:`, {
     finalUrl: finalUrl.substring(0, 100) + '...',
     typeParam
   });
 
   // 方案1: type=video → 视频笔记
   if (typeParam === 'video') {
-    console.log(`🎬 URL参数识别为视频笔记 (type=video)`);
+    log.parse(`URL参数识别为视频笔记 (type=video)`);
     return {
       contentType: 'video',
       isLivePhoto: false
@@ -1109,13 +1111,13 @@ function determineNoteType(finalUrl: string, html: string): {
     const hasLiveData = hasLivePhotoData(html);
 
     if (hasLiveData) {
-      console.log(`📸 URL参数为normal且有livePhotoData，识别为实况图片笔记`);
+      log.livePhoto(`URL参数为normal且有livePhotoData，识别为实况图片笔记`);
       return {
         contentType: 'image', // Live图本质上是图片+动态效果
         isLivePhoto: true
       };
     } else {
-      console.log(`📄 URL参数为normal且无livePhotoData，识别为图文笔记`);
+      log.parse(`URL参数为normal且无livePhotoData，识别为图文笔记`);
       return {
         contentType: 'image',
         isLivePhoto: false
@@ -1124,17 +1126,17 @@ function determineNoteType(finalUrl: string, html: string): {
   }
 
   // 回退方案: 没有type参数时，使用传统逻辑
-  console.log(`⚠️ 未找到type参数，使用回退逻辑判断`);
+  log.warn(`未找到type参数，使用回退逻辑判断`);
   const hasLiveData = hasLivePhotoData(html);
 
   if (hasLiveData) {
-    console.log(`📸 回退逻辑：有livePhotoData，识别为实况图片笔记`);
+    log.livePhoto(`回退逻辑：有livePhotoData，识别为实况图片笔记`);
     return {
       contentType: 'image',
       isLivePhoto: true
     };
   } else {
-    console.log(`📄 回退逻辑：无livePhotoData，识别为图文笔记`);
+    log.parse(`回退逻辑：无livePhotoData，识别为图文笔记`);
     return {
       contentType: 'image',
       isLivePhoto: false

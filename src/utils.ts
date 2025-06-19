@@ -1,11 +1,13 @@
 /**
  * 工具函数模块 - TypeScript版本
  * 提供通用的工具函数和辅助方法，具有完整的类型安全
- * 
+ *
  * @fileoverview 通用工具函数集合
  * @author Augment Agent
  * @version 2.0.0
  */
+
+import { log } from './logger.js';
 
 // ==================== 类型定义 ====================
 
@@ -146,7 +148,7 @@ export function safeJsonParse<T = any>(str: string, fallback: T = {} as T): T {
   try {
     return JSON.parse(str) as T;
   } catch (error) {
-    console.error('JSON 解析错误:', error, '原始字符串:', str);
+    log.error('JSON 解析错误:', error, '原始字符串:', str);
     return fallback;
   }
 }
@@ -194,8 +196,8 @@ export function extractXiaohongshuLink(text: string | null | undefined): string 
 export function extractDouyinLink(text: string | null | undefined): string | null {
   if (!text) return null;
   
-  console.log('尝试从文本中提取抖音链接:', text);
-  
+  log.parse('尝试从文本中提取抖音链接:', text);
+
   // 定义匹配模式
   const patterns: RegExp[] = [
     // 模式1: 标准的 douyin.com 链接
@@ -207,17 +209,17 @@ export function extractDouyinLink(text: string | null | undefined): string | nul
     // 模式4: 更宽松的匹配
     /https?:\/\/(?:www\.|v\.)?douyin\.com\/[a-zA-Z0-9\/\._\-]+/i
   ];
-  
+
   for (let i = 0; i < patterns.length; i++) {
     const match = text.match(patterns[i]);
     if (match) {
       const link = match[1] || match[0];
-      console.log(`使用模式${i + 1}找到抖音链接:`, link);
+      log.success(`使用模式${i + 1}找到抖音链接:`, link);
       return link;
     }
   }
-  
-  console.log('未找到抖音链接');
+
+  log.debug('未找到抖音链接');
   return null;
 }
 

@@ -8,6 +8,7 @@
  */
 
 import { IMAGE_HOST_CONFIG, type ImageHostConfig } from './config.js';
+import { log } from './logger.js';
 
 // ==================== 常量配置 ====================
 
@@ -175,7 +176,7 @@ export class ImageHostService {
       return this.token;
     }
 
-    console.log('令牌不存在或已过期，正在登录获取新令牌...');
+    log.config('令牌不存在或已过期，正在登录获取新令牌...');
 
     try {
       // 登录并获取新令牌（设置15秒超时）
@@ -198,13 +199,13 @@ export class ImageHostService {
 
         if (!response.ok) {
           const errorText = await response.text();
-          console.error(`登录请求失败: ${response.status} ${response.statusText}`);
-          console.error(`登录错误响应: ${errorText}`);
+          log.error(`登录请求失败: ${response.status} ${response.statusText}`);
+          log.error(`登录错误响应: ${errorText}`);
           throw new Error(`登录请求失败: ${response.status} ${response.statusText} - ${errorText}`);
         }
 
         const data: LoginResponse = await response.json();
-        console.log('图床登录响应:', data);
+        log.debug('图床登录响应:', data);
 
         // 检查响应中是否包含token字段
         if (data.token) {
@@ -212,7 +213,7 @@ export class ImageHostService {
           this.token = data.token;
           this.tokenExpiresAt = now + this.config.TOKEN_TTL;
 
-          console.log('登录成功，获取到新令牌');
+          log.success('登录成功，获取到新令牌');
           return this.token;
         } else {
           throw new Error(`登录失败: ${data.error || data.message || '未知错误'}`);
@@ -225,7 +226,7 @@ export class ImageHostService {
         throw fetchError;
       }
     } catch (error) {
-      console.error('登录失败:', error);
+      log.failure('登录失败', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`图床认证失败: ${errorMessage}`);
     }
@@ -254,19 +255,19 @@ export class ImageHostService {
     contentType?: string,
     onProgress?: ProgressCallback
   ): Promise<string> {
-    console.log(`🔄 [${new Date().toISOString()}] 开始上传文件到图床: ${fileName}, 类型: ${contentType}`);
+    log.info(`🔄 [${new Date().toISOString()}] 开始上传文件到图床: ${fileName}, 类型: ${contentType}`);
 
     try {
       // 如果fileData是URL，需要先下载
       let processedFileData: ArrayBuffer | Blob;
       if (typeof fileData === 'string' && fileData.startsWith('http')) {
-        console.log(`下载远程文件: ${fileData}`);
+        log.info(`下载远程文件: ${fileData}`);
         const response = await fetch(fileData);
         if (!response.ok) {
           throw new Error(`下载文件失败: ${response.status} ${response.statusText}`);
         }
         processedFileData = await response.arrayBuffer();
-        console.log(`文件下载完成，大小: ${processedFileData.byteLength} 字节`);
+        log.info(`文件下载完成，大小: ${processedFileData.byteLength} 字节`);
       } else {
         processedFileData = fileData as ArrayBuffer | Blob;
       }
@@ -275,18 +276,18 @@ export class ImageHostService {
       const fileSize = processedFileData instanceof ArrayBuffer ?
         processedFileData.byteLength : processedFileData.size;
 
-      console.log(`文件大小: ${fileSize} 字节 (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
+      log.info(`文件大小: ${fileSize} 字节 (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
 
       // 智能选择上传方式
       if (fileSize > LARGE_FILE_THRESHOLD) {
-        console.log(`文件大小超过${LARGE_FILE_THRESHOLD / 1024 / 1024}MB，使用分片上传`);
+        log.info(`文件大小超过${LARGE_FILE_THRESHOLD / 1024 / 1024}MB，使用分片上传`);
         return await this.uploadFileWithChunking(processedFileData, fileName, contentType, onProgress);
       } else {
-        console.log(`文件大小小于等于${LARGE_FILE_THRESHOLD / 1024 / 1024}MB，使用普通上传`);
+        log.info(`文件大小小于等于${LARGE_FILE_THRESHOLD / 1024 / 1024}MB，使用普通上传`);
         return await this.uploadFileNormal(processedFileData, fileName, contentType);
       }
     } catch (error) {
-      console.error(`上传文件失败: ${fileName}`, error);
+      log.error(`上传文件失败: ${fileName}`, error);
       throw error;
     }
   }
@@ -323,14 +324,14 @@ export class ImageHostService {
     };
 
     // 发送上传请求（设置30秒超时）
-    console.log(`发送普通上传请求到: ${this.config.UPLOAD_URL}`);
-    console.log(`请求头:`, headers);
-    console.log(`文件信息: ${fileName}, 大小: ${file.size} bytes`);
+    log.info(`发送普通上传请求到: ${this.config.UPLOAD_URL}`);
+    log.info(`请求头:`, headers);
+    log.info(`文件信息: ${fileName}, 大小: ${file.size} bytes`);
 
     let response: Response;
     const uploadController = new AbortController();
     const uploadTimeoutId = setTimeout(() => {
-      console.log('上传请求超时，正在中止...');
+      log.info('上传请求超时，正在中止...');
       uploadController.abort();
     }, 30000);
 
@@ -346,40 +347,40 @@ export class ImageHostService {
       if (fetchError instanceof Error && fetchError.name === 'AbortError') {
         throw new Error('上传请求超时（30秒）');
       }
-      console.error('上传请求异常:', fetchError);
+      log.error('上传请求异常:', fetchError);
       const errorMessage = fetchError instanceof Error ? fetchError.message : String(fetchError);
       throw new Error(`上传请求失败: ${errorMessage}`);
     } finally {
       clearTimeout(uploadTimeoutId);
     }
 
-    console.log(`上传响应状态: ${response.status} ${response.statusText}`);
+    log.info(`上传响应状态: ${response.status} ${response.statusText}`);
     const headersObj: Record<string, string> = {};
     response.headers.forEach((value, key) => {
       headersObj[key] = value;
     });
-    console.log(`响应头:`, headersObj);
+    log.info(`响应头:`, headersObj);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`上传请求失败: ${response.status} ${response.statusText}`);
-      console.error(`错误响应: ${errorText}`);
+      log.error(`上传请求失败: ${response.status} ${response.statusText}`);
+      log.error(`错误响应: ${errorText}`);
       throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
     }
 
     // 先获取响应文本，然后尝试解析JSON
     const responseText = await response.text();
-    console.log(`原始响应文本:`, responseText);
+    log.info(`原始响应文本:`, responseText);
 
     let result: UploadResponse;
     try {
       result = JSON.parse(responseText) as UploadResponse;
     } catch (parseError) {
-      console.error(`JSON解析失败:`, parseError);
+      log.error(`JSON解析失败:`, parseError);
       throw new Error(`响应不是有效的JSON: ${responseText}`);
     }
 
-    console.log('图床上传响应详情:', {
+    log.info('图床上传响应详情:', {
       type: typeof result,
       isArray: Array.isArray(result),
       length: Array.isArray(result) ? result.length : 'N/A',
@@ -394,7 +395,7 @@ export class ImageHostService {
     // 提取文件URL
     const fileUrl = this.extractFileUrl(result, fileName);
 
-    console.log(`普通上传成功，文件URL: ${fileUrl}`);
+    log.info(`普通上传成功，文件URL: ${fileUrl}`);
     return fileUrl;
   }
 
@@ -415,7 +416,7 @@ export class ImageHostService {
     const fileSize = fileData instanceof ArrayBuffer ? fileData.byteLength : fileData.size;
     const finalContentType = contentType || this.getContentType(fileName);
 
-    console.log(`开始分片上传: ${fileName}, 大小: ${fileSize} 字节, 类型: ${finalContentType}`);
+    log.info(`开始分片上传: ${fileName}, 大小: ${fileSize} 字节, 类型: ${finalContentType}`);
 
     // 检查文件大小限制
     if (fileSize > 100 * 1024 * 1024) {
@@ -424,11 +425,11 @@ export class ImageHostService {
 
     // 生成会话ID
     const sessionId = this.generateSessionId();
-    console.log(`生成会话ID: ${sessionId}`);
+    log.info(`生成会话ID: ${sessionId}`);
 
     // 计算分片数量
     const totalChunks = Math.ceil(fileSize / CHUNK_SIZE);
-    console.log(`文件将被分为 ${totalChunks} 个分片，每个分片大小: ${CHUNK_SIZE / 1024 / 1024}MB`);
+    log.info(`文件将被分为 ${totalChunks} 个分片，每个分片大小: ${CHUNK_SIZE / 1024 / 1024}MB`);
 
     // 将文件数据转换为ArrayBuffer以便分片
     let arrayBuffer: ArrayBuffer;
@@ -444,7 +445,7 @@ export class ImageHostService {
       const end = Math.min(start + CHUNK_SIZE, fileSize);
       const chunkData = arrayBuffer.slice(start, end);
 
-      console.log(`上传分片 ${i + 1}/${totalChunks}, 大小: ${chunkData.byteLength} 字节`);
+      log.info(`上传分片 ${i + 1}/${totalChunks}, 大小: ${chunkData.byteLength} 字节`);
 
       await this.uploadChunk(sessionId, i, chunkData, fileName, totalChunks, fileSize, finalContentType);
 
@@ -460,7 +461,7 @@ export class ImageHostService {
       }
     }
 
-    console.log(`所有分片上传完成，开始合并...`);
+    log.info(`所有分片上传完成，开始合并...`);
 
     // 合并分片
     const result = await this.mergeChunks({
@@ -481,22 +482,22 @@ export class ImageHostService {
     if (result.result && result.result.src) {
       // 新格式：{success: true, result: {src: '/file/...', ...}}
       fileUrl = `${this.config.DOMAIN}${result.result.src}`;
-      console.log(`✅ 使用result.src字段构建URL: ${fileUrl}`);
+      log.info(`✅ 使用result.src字段构建URL: ${fileUrl}`);
     } else if (result.url) {
       // 旧格式：{success: true, url: '...'}
       fileUrl = result.url.startsWith('http') ? result.url : `${this.config.DOMAIN}${result.url}`;
-      console.log(`✅ 使用url字段构建URL: ${fileUrl}`);
+      log.info(`✅ 使用url字段构建URL: ${fileUrl}`);
     } else if (result.fileId) {
       // 备用格式：{success: true, fileId: '...'}
       fileUrl = `${this.config.DOMAIN}/file/${result.fileId}`;
-      console.log(`✅ 使用fileId字段构建URL: ${fileUrl}`);
+      log.info(`✅ 使用fileId字段构建URL: ${fileUrl}`);
     } else {
-      console.error(`❌ 无法从分片合并响应中提取URL`);
-      console.error(`响应内容:`, JSON.stringify(result, null, 2));
+      log.error(`❌ 无法从分片合并响应中提取URL`);
+      log.error(`响应内容:`, JSON.stringify(result, null, 2));
       throw new Error(`分片合并成功但无法提取文件URL`);
     }
 
-    console.log(`分片上传成功，文件URL: ${fileUrl}`);
+    log.info(`分片上传成功，文件URL: ${fileUrl}`);
     return fileUrl;
   }
 
@@ -546,7 +547,7 @@ export class ImageHostService {
     }
 
     const chunkUploadUrl = `${this.config.DOMAIN}/upload-chunk`;
-    console.log(`上传分片到: ${chunkUploadUrl}`);
+    log.info(`上传分片到: ${chunkUploadUrl}`);
 
     const response = await fetch(chunkUploadUrl, {
       method: 'POST',
@@ -567,7 +568,7 @@ export class ImageHostService {
       throw new Error(`分片上传失败: ${result.message}`);
     }
 
-    console.log(`分片 ${chunkIndex} 上传成功`);
+    log.info(`分片 ${chunkIndex} 上传成功`);
     return result;
   }
 
@@ -581,8 +582,8 @@ export class ImageHostService {
     const token = await this.ensureAuthenticated();
 
     const mergeUrl = `${this.config.DOMAIN}/merge-chunks`;
-    console.log(`合并分片请求到: ${mergeUrl}`);
-    console.log(`合并参数:`, request);
+    log.info(`合并分片请求到: ${mergeUrl}`);
+    log.info(`合并参数:`, request);
 
     const response = await fetch(mergeUrl, {
       method: 'POST',
@@ -599,7 +600,7 @@ export class ImageHostService {
     }
 
     const result: MergeChunksResponse = await response.json();
-    console.log(`分片合并响应:`, result);
+    log.info(`分片合并响应:`, result);
 
     return result;
   }
@@ -616,55 +617,55 @@ export class ImageHostService {
     if (Array.isArray(result) && result.length > 0) {
       // 格式1: [{"src": "/file/fileId.extension"}] - 这是TG-Image的标准格式
       const firstResult = result[0];
-      console.log('✅ 检测到TG-Image标准数组格式响应');
-      console.log('第一个元素:', JSON.stringify(firstResult, null, 2));
+      log.info('✅ 检测到TG-Image标准数组格式响应');
+      log.info('第一个元素:', JSON.stringify(firstResult, null, 2));
 
       if (firstResult.src) {
         fileUrl = `${this.config.DOMAIN}${firstResult.src}`;
-        console.log(`✅ 成功提取src字段: ${firstResult.src}`);
-        console.log(`✅ 构建完整URL: ${fileUrl}`);
+        log.info(`✅ 成功提取src字段: ${firstResult.src}`);
+        log.info(`✅ 构建完整URL: ${fileUrl}`);
       } else if (firstResult.url) {
         fileUrl = firstResult.url.startsWith('http') ? firstResult.url : `${this.config.DOMAIN}${firstResult.url}`;
-        console.log(`✅ 使用url字段: ${fileUrl}`);
+        log.info(`✅ 使用url字段: ${fileUrl}`);
       } else if (firstResult.path) {
         fileUrl = `${this.config.DOMAIN}${firstResult.path}`;
-        console.log(`✅ 使用path字段: ${fileUrl}`);
+        log.info(`✅ 使用path字段: ${fileUrl}`);
       } else {
-        console.error(`❌ 数组元素中没有找到src/url/path字段`);
-        console.error(`可用字段: ${Object.keys(firstResult)}`);
+        log.error(`❌ 数组元素中没有找到src/url/path字段`);
+        log.error(`可用字段: ${Object.keys(firstResult)}`);
       }
     } else if (!Array.isArray(result)) {
       // 处理对象格式响应
       if (result.src) {
         // 格式2: {"src": "/file/fileId.extension"}
-        console.log('处理对象格式响应，src字段:', result.src);
+        log.info('处理对象格式响应，src字段:', result.src);
         fileUrl = `${this.config.DOMAIN}${result.src}`;
       } else if (result.url) {
         // 格式3: {"url": "完整URL或相对路径"}
-        console.log('处理对象格式响应，url字段:', result.url);
+        log.info('处理对象格式响应，url字段:', result.url);
         fileUrl = result.url.startsWith('http') ? result.url : `${this.config.DOMAIN}${result.url}`;
       } else if (result.path) {
         // 格式5: {"path": "/file/fileId.extension"}
-        console.log('处理对象格式响应，path字段:', result.path);
+        log.info('处理对象格式响应，path字段:', result.path);
         fileUrl = `${this.config.DOMAIN}${result.path}`;
       } else if (result.data?.url) {
         // 格式4: {"data": {"url": "..."}}
-        console.log('处理嵌套格式响应，data.url字段:', result.data.url);
+        log.info('处理嵌套格式响应，data.url字段:', result.data.url);
         fileUrl = result.data.url.startsWith('http') ? result.data.url : `${this.config.DOMAIN}${result.data.url}`;
       } else if (result.success && result.message) {
         // 格式6: 只有成功消息，没有URL - 这种情况下我们需要生成URL
-        console.log('响应只包含成功消息，尝试生成URL');
+        log.info('响应只包含成功消息，尝试生成URL');
         const timestamp = Date.now();
         const ext = fileName.split('.').pop();
         fileUrl = `${this.config.DOMAIN}/file/${timestamp}.${ext}`;
-        console.log('生成的URL:', fileUrl);
+        log.info('生成的URL:', fileUrl);
       }
     }
 
     if (!fileUrl) {
       // 如果仍然无法提取URL，但响应表明成功，我们记录详细信息但不抛出错误
-      console.warn(`无法从响应中提取文件URL，但上传可能成功了`);
-      console.warn(`响应内容:`, JSON.stringify(result, null, 2));
+      log.warn(`无法从响应中提取文件URL，但上传可能成功了`);
+      log.warn(`响应内容:`, JSON.stringify(result, null, 2));
 
       // 尝试最后一种方法：如果有任何看起来像URL的字段
       if (!Array.isArray(result)) {
@@ -677,34 +678,34 @@ export class ImageHostService {
           const urlField = possibleUrlFields[0];
           const value = (result as any)[urlField];
           fileUrl = value.startsWith('http') ? value : `${this.config.DOMAIN}${value}`;
-          console.log(`使用字段 ${urlField} 作为URL: ${fileUrl}`);
+          log.info(`使用字段 ${urlField} 作为URL: ${fileUrl}`);
         }
       }
 
       if (!fileUrl) {
         // 如果所有方法都失败，但图片确实上传成功了，尝试构造一个可能的URL
-        console.warn(`所有URL提取方法都失败，尝试构造默认URL`);
+        log.warn(`所有URL提取方法都失败，尝试构造默认URL`);
         const timestamp = Date.now();
         let ext = fileName.split('.').pop();
 
         // 如果是封面图片且为WebP格式，强制使用JPEG格式
         if (fileName.includes('cover') && ext === 'webp') {
           ext = 'jpg';
-          console.log(`🔧 封面图片强制使用JPEG格式，从 webp 改为 jpg`);
+          log.info(`🔧 封面图片强制使用JPEG格式，从 webp 改为 jpg`);
         }
 
         fileUrl = `${this.config.DOMAIN}/file/${timestamp}.${ext}`;
-        console.log(`构造的默认URL: ${fileUrl}`);
+        log.info(`构造的默认URL: ${fileUrl}`);
 
         // 记录完整的响应信息以便调试
-        console.error(`=== 图床响应详细信息 ===`);
-        console.error(`响应类型: ${typeof result}`);
-        console.error(`是否为数组: ${Array.isArray(result)}`);
+        log.error(`=== 图床响应详细信息 ===`);
+        log.error(`响应类型: ${typeof result}`);
+        log.error(`是否为数组: ${Array.isArray(result)}`);
         if (!Array.isArray(result)) {
-          console.error(`响应键值: ${Object.keys(result)}`);
+          log.error(`响应键值: ${Object.keys(result)}`);
         }
-        console.error(`完整响应内容: ${JSON.stringify(result, null, 2)}`);
-        console.error(`=== 图床响应详细信息结束 ===`);
+        log.error(`完整响应内容: ${JSON.stringify(result, null, 2)}`);
+        log.error(`=== 图床响应详细信息结束 ===`);
       }
     }
 
@@ -727,11 +728,11 @@ export class ImageHostService {
     fileName: string,
     contentType?: string
   ): Promise<string> {
-    console.log(`上传流: ${fileName}, 类型: ${contentType}`);
+    log.info(`上传流: ${fileName}, 类型: ${contentType}`);
 
     // 检查是否是Node.js流
     if (this.isNodeStream(stream)) {
-      console.log('检测到Node.js流');
+      log.info('检测到Node.js流');
 
       // 使用Promise包装流处理
       return new Promise((resolve, reject) => {
@@ -746,7 +747,7 @@ export class ImageHostService {
           try {
             // 合并所有块
             const buffer = Buffer.concat(chunks);
-            console.log(`流数据收集完成，大小: ${buffer.length} 字节`);
+            log.info(`流数据收集完成，大小: ${buffer.length} 字节`);
 
             // 上传合并后的数据
             const url = await this.uploadFile(buffer, fileName, contentType);
@@ -763,7 +764,7 @@ export class ImageHostService {
     }
     // 处理Web API的ReadableStream
     else if (this.isWebStream(stream)) {
-      console.log('检测到Web API的ReadableStream');
+      log.info('检测到Web API的ReadableStream');
 
       // 将流转换为ArrayBuffer
       const reader = stream.getReader();

@@ -8,7 +8,8 @@
  */
 
 import { imageHostService, type ImageHostService } from './imageHost.js';
-import { PROXY_CONFIG } from './config.js';
+import { PROXY_CONFIG, MEDIA_PROCESSING_CONFIG } from './config.js';
+import { log } from './logger.js';
 import {
   createProxyUrl,
   shouldUseProxy,
@@ -27,7 +28,7 @@ export interface MediaEnv {
   IMAGE_HOST_PASSWORD?: string;
 }
 
-// R2相关类型定义已删除
+
 
 /** 媒体文件类型 */
 export type MediaFileType = 'video' | 'image' | 'audio' | 'unknown';
@@ -99,8 +100,8 @@ export interface FileInfo {
 
 // ==================== 常量配置 ====================
 
-/** 文件大小阈值：100MB（字节） - 小于此大小的文件上传到图床，大于等于此大小的文件使用CDN代理 */
-const FILE_SIZE_THRESHOLD = 100 * 1024 * 1024;
+/** 文件大小阈值：使用配置文件中的值 */
+const FILE_SIZE_THRESHOLD = MEDIA_PROCESSING_CONFIG.SIZE_LIMITS.PROXY_THRESHOLD;
 
 /** 支持的视频格式 */
 const VIDEO_FORMATS = new Set(['.mp4', '.webm', '.avi', '.mov', '.wmv', '.flv', '.mkv']);
@@ -128,10 +129,7 @@ const CONTENT_TYPE_MAP: Record<string, string> = {
 
 // ==================== 全局变量 ====================
 
-// R2存储功能已删除
-
 // ==================== 初始化函数 ====================
-// R2存储初始化函数已删除
 
 // ==================== 工具函数 ====================
 
@@ -211,7 +209,7 @@ function getFileExtension(url: string): string {
     }
   } catch (error) {
     // URL解析失败，忽略错误
-    console.warn(`无法从URL解析扩展名: ${url}`, error);
+    log.warn(`无法从URL解析扩展名: ${url}`, error);
   }
   
   // 尝试从URL参数或路径中猜测文件类型
@@ -300,9 +298,7 @@ function extractVideoId(url: string): string | null {
 
 // ==================== 核心处理函数 ====================
 
-// uploadToR2函数已删除
 
-// uploadLargeFileToR2Stream函数已删除
 
 /**
  * 处理带有解析数据的媒体文件（支持备用URL）
@@ -328,7 +324,7 @@ export async function processMediaFileWithParseData(
   } = options;
 
   try {
-    console.log(`🎬 处理媒体文件: ${url}`);
+    log.media(`处理媒体文件: ${url}`);
 
     // 获取文件大小
     let fileSize = 0;
@@ -341,53 +337,53 @@ export async function processMediaFileWithParseData(
       if (headResponse.ok) {
         const headContentLength = headResponse.headers.get('content-length');
         fileSize = headContentLength ? parseInt(headContentLength, 10) : 0;
-        console.log(`HEAD请求获取文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
+        log.network(`HEAD请求获取文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
       }
     } catch (headError) {
-      console.warn('HEAD请求失败，继续使用原始响应:', headError instanceof Error ? headError.message : String(headError));
+      log.warn('HEAD请求失败，继续使用原始响应:', headError instanceof Error ? headError.message : String(headError));
     }
 
-    console.log(`视频文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
+    log.media(`视频文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
 
     if (fileSize === 0) {
-      console.warn(`文件大小未知，无法确定处理方式`);
+      log.warn(`文件大小未知，无法确定处理方式`);
       throw new Error(`无法获取文件大小，无法确定处理方式`);
     }
 
     // 简化的文件大小处理逻辑：只有图床和CDN代理两种方式
     if (fileSize >= fileSizeThreshold) {
-      console.log(`🚀 文件大小 ${formatFileSize(fileSize)} 超过${formatFileSize(fileSizeThreshold)}，检查CDN代理方案`);
+      log.media(`文件大小 ${formatFileSize(fileSize)} 超过${formatFileSize(fileSizeThreshold)}，检查CDN代理方案`);
 
       // Live图视频不使用CDN代理，只上传到图床
       if (isLivePhoto) {
-        console.log(`📸 Live图视频不使用CDN代理，强制上传到图床`);
+        log.livePhoto(`Live图视频不使用CDN代理，强制上传到图床`);
       } else {
         // 检测平台并判断是否支持CDN代理
         const platformInfo = detectPlatform(url);
         const shouldProxy = shouldUseProxy(fileSize, platformInfo.platform);
 
         if (shouldProxy && platformInfo.supportsProxy) {
-          console.log(`✅ 使用CDN代理方案: ${platformInfo.platform} 平台，文件大小 ${formatFileSize(fileSize)}`);
+          log.success(`使用CDN代理方案: ${platformInfo.platform} 平台，文件大小 ${formatFileSize(fileSize)}`);
 
           try {
             // 创建代理URL，传递解析数据以提取备用URL
             const proxyUrl = createProxyUrl(url, parseData);
-            console.log(`🔗 CDN代理URL生成成功: ${proxyUrl.substring(0, 100)}...`);
+            log.network(`CDN代理URL生成成功: ${proxyUrl.substring(0, 100)}...`);
             return proxyUrl;
           } catch (proxyError) {
-            console.error(`CDN代理URL生成失败: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`);
+            log.failure(`CDN代理URL生成失败`, proxyError);
             throw new Error(`CDN代理URL生成失败: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`);
           }
         } else {
-          console.log(`❌ 不支持CDN代理: 平台=${platformInfo.platform}, 支持代理=${platformInfo.supportsProxy}, 应该使用代理=${shouldProxy}`);
-          console.log(`⚠️ 大文件无法使用CDN代理，返回原始URL: ${url}`);
+          log.warn(`不支持CDN代理: 平台=${platformInfo.platform}, 支持代理=${platformInfo.supportsProxy}, 应该使用代理=${shouldProxy}`);
+          log.warn(`大文件无法使用CDN代理，返回原始URL: ${url}`);
           return url;
         }
       }
     }
 
     // 常规处理流程（小于110MB的文件或Live图视频）
-    console.log(`📥 文件小于${formatFileSize(fileSizeThreshold)}或为Live图视频，上传到图床`);
+    log.media(`文件小于${formatFileSize(fileSizeThreshold)}或为Live图视频，上传到图床`);
 
     // 获取文件内容
     const response = await fetch(url, {
@@ -407,11 +403,11 @@ export async function processMediaFileWithParseData(
     const fileName = `${key}${fileExtension}`;
 
     // 直接上传到图床
-    console.log(`上传到图床: ${fileName} (${formatFileSize(buffer.byteLength)})`);
+    log.media(`上传到图床: ${fileName} (${formatFileSize(buffer.byteLength)})`);
     return await imageHostService.uploadFile(buffer, fileName, contentType);
 
   } catch (error) {
-    console.error(`处理媒体文件失败: ${url}`, error instanceof Error ? error.message : String(error));
+    log.failure(`处理媒体文件失败: ${url}`, error);
     throw new Error(`处理媒体文件失败: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -440,21 +436,21 @@ export async function processMediaFile(
 
   // 如果输入是ArrayBuffer或Uint8Array，直接上传到图床
   if (typeof url !== 'string') {
-    console.log(`使用已缓存的媒体文件数据, 大小: ${url.byteLength} 字节`);
+    log.media(`使用已缓存的媒体文件数据, 大小: ${url.byteLength} 字节`);
     const contentType = 'video/mp4'; // 默认视频类型
     const fileName = `${key}.mp4`;
 
-    console.log(`上传到图床: ${fileName} (${formatFileSize(url.byteLength)})`);
+    log.media(`上传到图床: ${fileName} (${formatFileSize(url.byteLength)})`);
     return await imageHostService.uploadFile(url, fileName, contentType);
   }
 
   // 处理URL情况
   try {
-    console.log(`处理媒体文件: ${url}`);
+    log.media(`处理媒体文件: ${url}`);
 
     // Live图视频跳过文件大小检测，直接上传到图床
     if (isLivePhoto) {
-      console.log(`📸 Live图视频跳过文件大小检测，直接上传到图床`);
+      log.livePhoto(`Live图视频跳过文件大小检测，直接上传到图床`);
 
       // 判断是否是抖音视频
       const isDouyinVideo = url.includes('douyin.com') ||
@@ -491,13 +487,13 @@ export async function processMediaFile(
 
       // 获取文件内容并直接上传
       const buffer = await response.arrayBuffer();
-      console.log(`Live图视频数据获取完成，大小: ${buffer.byteLength} 字节`);
+      log.livePhoto(`Live图视频数据获取完成，大小: ${buffer.byteLength} 字节`);
 
       const contentType = response.headers.get('content-type') || 'video/mp4';
       const fileExtension = contentType.includes('video') ? '.mp4' : '.jpg';
       const fileName = `${key}${fileExtension}`;
 
-      console.log(`上传Live图视频到图床: ${fileName} (${formatFileSize(buffer.byteLength)})`);
+      log.livePhoto(`上传Live图视频到图床: ${fileName} (${formatFileSize(buffer.byteLength)})`);
       return await imageHostService.uploadFile(buffer, fileName, contentType);
     }
 
@@ -529,7 +525,7 @@ export async function processMediaFile(
     };
 
     // 使用fetch API获取视频数据，带超时控制
-    console.log(`使用fetch获取视频数据: ${url}`);
+    log.network(`使用fetch获取视频数据: ${url}`);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -551,7 +547,7 @@ export async function processMediaFile(
 
     // 获取内容类型
     const contentType = response.headers.get('content-type') || 'video/mp4';
-    console.log(`视频类型: ${contentType}`);
+    log.media(`视频类型: ${contentType}`);
 
     // 检查文件大小，避免内存溢出
     let contentLength = response.headers.get('content-length');
@@ -559,7 +555,7 @@ export async function processMediaFile(
 
     // 如果第一次请求没有Content-Length（可能是重定向），尝试HEAD请求获取真实大小
     if (fileSize === 0) {
-      console.log('第一次请求未获取到文件大小，尝试HEAD请求...');
+      log.network('第一次请求未获取到文件大小，尝试HEAD请求...');
       try {
         const headResponse = await fetch(url, {
           method: 'HEAD',
@@ -569,46 +565,46 @@ export async function processMediaFile(
         if (headResponse.ok) {
           const headContentLength = headResponse.headers.get('content-length');
           fileSize = headContentLength ? parseInt(headContentLength, 10) : 0;
-          console.log(`HEAD请求获取文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
+          log.network(`HEAD请求获取文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
         }
       } catch (headError) {
-        console.warn('HEAD请求失败，继续使用原始响应:', headError instanceof Error ? headError.message : String(headError));
+        log.warn('HEAD请求失败，继续使用原始响应:', headError instanceof Error ? headError.message : String(headError));
       }
     }
 
-    console.log(`视频文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
+    log.media(`视频文件大小: ${fileSize > 0 ? formatFileSize(fileSize) : '未知'}`);
 
     if (fileSize === 0) {
-      console.warn(`文件大小未知，无法确定处理方式`);
+      log.warn(`文件大小未知，无法确定处理方式`);
       throw new Error(`无法获取文件大小，无法确定处理方式`);
     }
 
     // 简化的文件大小处理逻辑：只有图床和CDN代理两种方式
     if (fileSize >= fileSizeThreshold) {
-      console.log(`🚀 文件大小 ${formatFileSize(fileSize)} 超过${formatFileSize(fileSizeThreshold)}，检查CDN代理方案`);
+      log.media(`文件大小 ${formatFileSize(fileSize)} 超过${formatFileSize(fileSizeThreshold)}，检查CDN代理方案`);
 
       // Live图视频不使用CDN代理，只上传到图床
       if (isLivePhoto) {
-        console.log(`📸 Live图视频不使用CDN代理，强制上传到图床`);
+        log.livePhoto(`Live图视频不使用CDN代理，强制上传到图床`);
       } else {
         // 检测平台并判断是否支持CDN代理
         const platformInfo = detectPlatform(url);
         const shouldProxy = shouldUseProxy(fileSize, platformInfo.platform);
 
         if (shouldProxy && platformInfo.supportsProxy) {
-          console.log(`✅ 使用CDN代理方案: ${platformInfo.platform} 平台，文件大小 ${formatFileSize(fileSize)}`);
+          log.success(`使用CDN代理方案: ${platformInfo.platform} 平台，文件大小 ${formatFileSize(fileSize)}`);
 
           try {
             // 创建代理URL（在processMediaFile中没有parseData，所以不传递）
             const proxyUrl = createProxyUrl(url);
-            console.log(`🔗 CDN代理URL生成成功: ${proxyUrl.substring(0, 100)}...`);
+            log.network(`CDN代理URL生成成功: ${proxyUrl.substring(0, 100)}...`);
             return proxyUrl;
           } catch (proxyError) {
-            console.error(`CDN代理URL生成失败: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`);
+            log.failure(`CDN代理URL生成失败`, proxyError);
             throw new Error(`CDN代理URL生成失败: ${proxyError instanceof Error ? proxyError.message : String(proxyError)}`);
           }
         } else {
-          console.log(`❌ 不支持CDN代理: 平台=${platformInfo.platform}, 支持代理=${platformInfo.supportsProxy}, 应该使用代理=${shouldProxy}`);
+          log.warn(`不支持CDN代理: 平台=${platformInfo.platform}, 支持代理=${platformInfo.supportsProxy}, 应该使用代理=${shouldProxy}`);
           throw new Error(`文件大小${formatFileSize(fileSize)}超过${formatFileSize(fileSizeThreshold)}，但平台${platformInfo.platform}不支持CDN代理，无法处理此文件`);
         }
       }
@@ -616,7 +612,7 @@ export async function processMediaFile(
 
     // 获取媒体数据
     const buffer = await response.arrayBuffer();
-    console.log(`媒体数据获取完成，大小: ${buffer.byteLength} 字节`);
+    log.media(`媒体数据获取完成，大小: ${buffer.byteLength} 字节`);
 
     // 直接处理媒体文件，无需WebP转换（已在URL选择阶段优先选择JPEG）
     let processedBuffer = buffer;
@@ -644,17 +640,17 @@ export async function processMediaFile(
       fileExtension = getFileExtension(url);
     }
 
-    console.log(`处理媒体文件: ${url.substring(0, 100)}...`);
-    console.log(`文件格式: ${fileExtension}, Content-Type: ${finalContentType}`);
+    log.media(`处理媒体文件: ${url.substring(0, 100)}...`);
+    log.media(`文件格式: ${fileExtension}, Content-Type: ${finalContentType}`);
 
     // 生成唯一的文件名
     const fileName = `${key}${fileExtension}`;
 
     // 直接上传到图床（简化逻辑）
-    console.log(`上传到图床: ${fileName} (${formatFileSize(processedBuffer.byteLength)})`);
+    log.media(`上传到图床: ${fileName} (${formatFileSize(processedBuffer.byteLength)})`);
     return await imageHostService.uploadFile(processedBuffer, fileName, finalContentType);
   } catch (error) {
-    console.error(`处理媒体文件失败: ${url}`, error instanceof Error ? error.message : String(error));
+    log.failure(`处理媒体文件失败: ${url}`, error);
     throw new Error(`处理媒体文件失败: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
@@ -674,12 +670,12 @@ export async function handleMediaFiles(
   options: MediaProcessOptions = {}
 ): Promise<ProcessedMediaData> {
   try {
-    console.log(`🎬 [${new Date().toISOString()}] 开始处理媒体文件...`);
+    log.sync(`开始处理媒体文件...`);
 
     // 设置图床服务的环境变量
     if (env) {
       imageHostService.setEnv(env);
-      console.log('图床服务环境变量已设置');
+      log.config('图床服务环境变量已设置');
     }
 
     // 如果没有解析数据，直接返回
@@ -692,7 +688,7 @@ export async function handleMediaFiles(
 
     // 处理封面图片 - 必须成功
     if (processedData.cover) {
-      console.log(`处理封面图片: ${processedData.cover}`);
+      log.media(`处理封面图片: ${processedData.cover}`);
       const coverKey = `covers/${processedData._raw?.id || `cover_${Date.now()}`}`;
       const processedCover = await processMediaFile(processedData.cover, mediaBucket, coverKey, options);
 
@@ -702,7 +698,7 @@ export async function handleMediaFiles(
       }
 
       processedData.cover = processedCover;
-      console.log(`封面图片处理完成: ${processedData.cover}`);
+      log.success(`封面图片处理完成: ${processedData.cover}`);
     }
 
     // 处理视频 - 允许跳过处理（文件过大时）
@@ -711,50 +707,50 @@ export async function handleMediaFiles(
       const isLivePhotoContent = processedData.videos && Array.isArray(processedData.videos) && processedData.videos.length > 1;
 
       if (isLivePhotoContent) {
-        console.log(`📸 检测到Live图内容，跳过主视频处理（主视频将在Live图视频中处理）`);
+        log.info(`📸 检测到Live图内容，跳过主视频处理（主视频将在Live图视频中处理）`);
         // 将主视频URL设置为第一个Live图视频的处理结果（稍后会被替换）
         processedData.video_download_url = processedData.video;
       } else {
-        console.log(`处理视频: ${processedData.video}`);
+        log.info(`处理视频: ${processedData.video}`);
         const videoKey = `videos/${processedData._raw?.id || `video_${Date.now()}`}`;
         const processedVideoUrl = await processMediaFileWithParseData(processedData.video, mediaBucket, videoKey, options, processedData);
 
         // 成功处理的情况（包括代理URL）
         processedData.video_download_url = processedVideoUrl;
         processedData.video = processedData.video_download_url;
-        console.log(`视频处理完成: ${processedData.video}`);
+        log.success(`视频处理完成: ${processedData.video}`);
       }
     }
 
     // 处理多视频（Live图等）
     if (processedData.videos && Array.isArray(processedData.videos) && processedData.videos.length > 1) {
-      console.log(`📸 处理Live图多视频: ${processedData.videos.length} 个视频`);
+      log.info(`📸 处理Live图多视频: ${processedData.videos.length} 个视频`);
 
       try {
         // 检查视频数量，如果过多则使用批量处理
         const videoCount = processedData.videos.length;
-        const BATCH_SIZE = 5; // 每批处理5个视频，避免subrequests过多
+        const BATCH_SIZE = MEDIA_PROCESSING_CONFIG.BATCH_SIZES.VIDEOS;
 
         if (videoCount > BATCH_SIZE) {
-          console.log(`📸 Live图视频数量较多(${videoCount})，使用批量处理，每批${BATCH_SIZE}个`);
+          log.livePhoto(`Live图视频数量较多(${videoCount})，使用批量处理，每批${BATCH_SIZE}个`);
 
           const processedVideos: string[] = [];
 
           // 分批处理视频
           for (let i = 0; i < processedData.videos.length; i += BATCH_SIZE) {
             const batch = processedData.videos.slice(i, i + BATCH_SIZE);
-            console.log(`📸 处理第${Math.floor(i/BATCH_SIZE) + 1}批视频 (${batch.length}个): ${i + 1}-${Math.min(i + BATCH_SIZE, videoCount)}`);
+            log.info(`📸 处理第${Math.floor(i/BATCH_SIZE) + 1}批视频 (${batch.length}个): ${i + 1}-${Math.min(i + BATCH_SIZE, videoCount)}`);
 
             const batchResults = await Promise.all(
               batch.map(async (videoUrl: string, batchIndex: number): Promise<string> => {
                 const globalIndex = i + batchIndex;
-                console.log(`处理Live图视频 ${globalIndex + 1}/${videoCount}: ${videoUrl}`);
+                log.info(`处理Live图视频 ${globalIndex + 1}/${videoCount}: ${videoUrl}`);
                 const videoKey = `videos/${processedData._raw?.id || Date.now()}_live_${globalIndex}`;
 
                 const livePhotoOptions = { ...options, isLivePhoto: true };
                 const processedVideoUrl = await processMediaFile(videoUrl, mediaBucket, videoKey, livePhotoOptions);
 
-                console.log(`Live图视频 ${globalIndex + 1} 处理完成: ${processedVideoUrl}`);
+                log.info(`Live图视频 ${globalIndex + 1} 处理完成: ${processedVideoUrl}`);
                 return processedVideoUrl;
               })
             );
@@ -763,8 +759,8 @@ export async function handleMediaFiles(
 
             // 批次间添加短暂延迟，避免请求过于密集
             if (i + BATCH_SIZE < processedData.videos.length) {
-              console.log(`📸 批次处理完成，等待500ms后处理下一批...`);
-              await new Promise(resolve => setTimeout(resolve, 500));
+              log.batch(Math.floor(i/BATCH_SIZE) + 1, Math.ceil(processedData.videos.length / BATCH_SIZE), `批次处理完成，等待${MEDIA_PROCESSING_CONFIG.DELAYS.BATCH_INTERVAL}ms后处理下一批...`);
+              await new Promise(resolve => setTimeout(resolve, MEDIA_PROCESSING_CONFIG.DELAYS.BATCH_INTERVAL));
             }
           }
 
@@ -773,13 +769,13 @@ export async function handleMediaFiles(
           // 视频数量较少，使用原有的并发处理
           const processedVideos = await Promise.all(
             processedData.videos.map(async (videoUrl: string, index: number): Promise<string> => {
-              console.log(`处理Live图视频 ${index + 1}/${processedData.videos!.length}: ${videoUrl}`);
+              log.info(`处理Live图视频 ${index + 1}/${processedData.videos!.length}: ${videoUrl}`);
               const videoKey = `videos/${processedData._raw?.id || Date.now()}_live_${index}`;
 
               const livePhotoOptions = { ...options, isLivePhoto: true };
               const processedVideoUrl = await processMediaFile(videoUrl, mediaBucket, videoKey, livePhotoOptions);
 
-              console.log(`Live图视频 ${index + 1} 处理完成: ${processedVideoUrl}`);
+              log.info(`Live图视频 ${index + 1} 处理完成: ${processedVideoUrl}`);
               return processedVideoUrl;
             })
           );
@@ -787,19 +783,19 @@ export async function handleMediaFiles(
           processedData.videos = processedVideos;
         }
 
-        console.log(`📸 Live图多视频处理完成: ${processedData.videos.length} 个视频`);
+        log.livePhoto(`Live图多视频处理完成: ${processedData.videos.length} 个视频`);
 
         // 将第一个Live图视频设置为主视频
         if (processedData.videos.length > 0) {
           processedData.video = processedData.videos[0];
           processedData.video_download_url = processedData.videos[0];
-          console.log(`📸 Live图主视频设置为第一个视频: ${processedData.video}`);
+          log.livePhoto(`Live图主视频设置为第一个视频: ${processedData.video}`);
         }
 
-        console.log(`📸 Live图多视频处理完成，主视频: ${processedData.video}`);
+        log.success(`Live图多视频处理完成，主视频: ${processedData.video}`);
 
       } catch (error) {
-        console.error('处理Live图多视频失败:', error);
+        log.error('处理Live图多视频失败:', error);
         throw new Error(`Live图多视频处理失败: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
@@ -815,14 +811,14 @@ export async function handleMediaFiles(
         const isGroupedContent = ('isGroupedContent' in processedData && (processedData as any).isGroupedContent === true) ||
                                  (processedData._raw && 'isGroupedContent' in processedData._raw && processedData._raw.isGroupedContent === true);
 
-        console.log(`处理 ${processedData.images.length} 张图片...`);
+        log.info(`处理 ${processedData.images.length} 张图片...`);
 
         // 检查是否为Live图笔记
         if (isLivePhoto) {
-          console.log(`📸 检测到Live图笔记，原始图片数量: ${processedData.images.length}`);
+          log.info(`📸 检测到Live图笔记，原始图片数量: ${processedData.images.length}`);
 
           if (isGroupedContent) {
-            console.log(`📸 检测到分组内容，将添加"实况图片"标签`);
+            log.info(`📸 检测到分组内容，将添加"实况图片"标签`);
             // 添加实况图片标签标识
             (processedData as any).addLivePhotoTag = true;
           }
@@ -830,7 +826,7 @@ export async function handleMediaFiles(
           // 检查是否有媒体分析结果，用于区分Live图和普通图片
           const mediaAnalysis = (processedData as any).mediaAnalysis;
           if (mediaAnalysis && mediaAnalysis.regularImages > 0) {
-            console.log(`📸 检测到混合内容: ${mediaAnalysis.livePhotoGroups}组Live图 + ${mediaAnalysis.regularImages}张普通图片`);
+            log.info(`📸 检测到混合内容: ${mediaAnalysis.livePhotoGroups}组Live图 + ${mediaAnalysis.regularImages}张普通图片`);
 
             // 从regularImageDetails中提取普通图片的URL
             const regularImageUrls: string[] = [];
@@ -848,59 +844,59 @@ export async function handleMediaFiles(
               }
             }
 
-            console.log(`📸 提取到${regularImageUrls.length}张普通图片URL，将保留这些图片进行处理`);
+            log.info(`📸 提取到${regularImageUrls.length}张普通图片URL，将保留这些图片进行处理`);
 
             // 只保留普通图片，过滤掉Live图相关的图片
             processedData.images = regularImageUrls;
 
           } else {
-            console.log(`📸 纯Live图内容：跳过所有图片上传和同步，只保留Live视频`);
+            log.info(`📸 纯Live图内容：跳过所有图片上传和同步，只保留Live视频`);
             // 纯Live图内容，清空所有图片
             processedData.images = [];
           }
 
           // 处理封面图片
           if (processedData.cover) {
-            console.log(`📸 Live图封面图片: ${processedData.cover}`);
+            log.info(`📸 Live图封面图片: ${processedData.cover}`);
             const coverKey = `covers/cover_${processedData._raw?.id || Date.now()}`;
             const processedCover = await processMediaFile(processedData.cover, mediaBucket, coverKey, options);
             processedData.cover = processedCover;
-            console.log(`📸 Live图封面处理完成: ${processedCover}`);
+            log.info(`📸 Live图封面处理完成: ${processedCover}`);
           }
 
-          console.log(`📸 Live图处理完成：保留${processedData.images.length}张普通图片，${processedData.videos?.length || 0}个视频`);
+          log.info(`📸 Live图处理完成：保留${processedData.images.length}张普通图片，${processedData.videos?.length || 0}个视频`);
         }
 
         // 处理图片 - 支持批量处理避免subrequests过多
-        console.log(`📸 [${new Date().toISOString()}] 开始处理 ${processedData.images.length} 张图片，必须全部上传成功...`);
+        log.info(`📸 [${new Date().toISOString()}] 开始处理 ${processedData.images.length} 张图片，必须全部上传成功...`);
 
         const imageCount = processedData.images.length;
-        const IMAGE_BATCH_SIZE = 6; // 每批处理6张图片
+        const IMAGE_BATCH_SIZE = MEDIA_PROCESSING_CONFIG.BATCH_SIZES.IMAGES;
 
-        // 设置总超时时间（每张图片最多30秒，总共不超过5分钟）
-        const totalTimeout = Math.min(imageCount * 30000, 300000);
-        console.log(`图片处理总超时时间: ${totalTimeout/1000}秒`);
+        // 设置总超时时间（使用配置文件中的值）
+        const totalTimeout = Math.min(imageCount * MEDIA_PROCESSING_CONFIG.TIMEOUTS.PER_IMAGE, MEDIA_PROCESSING_CONFIG.TIMEOUTS.TOTAL_MAX);
+        log.config(`图片处理总超时时间: ${totalTimeout/1000}秒`);
 
         const processImagesWithTimeout = async (): Promise<string[]> => {
           if (imageCount > IMAGE_BATCH_SIZE) {
-            console.log(`📸 图片数量较多(${imageCount})，使用批量处理，每批${IMAGE_BATCH_SIZE}张`);
+            log.info(`📸 图片数量较多(${imageCount})，使用批量处理，每批${IMAGE_BATCH_SIZE}张`);
 
             const processedImages: string[] = [];
 
             // 分批处理图片
             for (let i = 0; i < processedData.images!.length; i += IMAGE_BATCH_SIZE) {
               const batch = processedData.images!.slice(i, i + IMAGE_BATCH_SIZE);
-              console.log(`📸 处理第${Math.floor(i/IMAGE_BATCH_SIZE) + 1}批图片 (${batch.length}张): ${i + 1}-${Math.min(i + IMAGE_BATCH_SIZE, imageCount)}`);
+              log.info(`📸 处理第${Math.floor(i/IMAGE_BATCH_SIZE) + 1}批图片 (${batch.length}张): ${i + 1}-${Math.min(i + IMAGE_BATCH_SIZE, imageCount)}`);
 
               const batchResults = await Promise.all(
                 batch.map(async (image: string, batchIndex: number): Promise<string> => {
                   const globalIndex = i + batchIndex;
-                  console.log(`开始处理图片 ${globalIndex}: ${image}`);
+                  log.info(`开始处理图片 ${globalIndex}: ${image}`);
                   const imageKey = `images/${processedData._raw?.id || Date.now()}_${globalIndex}`;
 
                   try {
                     const processedUrl = await processMediaFile(image, mediaBucket, imageKey, options);
-                    console.log(`图片 ${globalIndex} 处理完成: ${processedUrl}`);
+                    log.info(`图片 ${globalIndex} 处理完成: ${processedUrl}`);
 
                     // 验证处理后的URL不是原始小红书链接
                     if (processedUrl === image || processedUrl.includes('xhscdn.com')) {
@@ -909,7 +905,7 @@ export async function handleMediaFiles(
 
                     return processedUrl;
                   } catch (error) {
-                    console.error(`图片 ${globalIndex} 处理失败:`, error instanceof Error ? error.message : String(error));
+                    log.error(`图片 ${globalIndex} 处理失败:`, error instanceof Error ? error.message : String(error));
                     throw new Error(`图片 ${globalIndex} 处理失败: ${error instanceof Error ? error.message : String(error)}`);
                   }
                 })
@@ -919,8 +915,8 @@ export async function handleMediaFiles(
 
               // 批次间添加短暂延迟，避免请求过于密集
               if (i + IMAGE_BATCH_SIZE < processedData.images!.length) {
-                console.log(`📸 图片批次处理完成，等待300ms后处理下一批...`);
-                await new Promise(resolve => setTimeout(resolve, 300));
+                log.batch(Math.floor(i/IMAGE_BATCH_SIZE) + 1, Math.ceil(processedData.images!.length / IMAGE_BATCH_SIZE), `图片批次处理完成，等待${MEDIA_PROCESSING_CONFIG.DELAYS.IMAGE_INTERVAL}ms后处理下一批...`);
+                await new Promise(resolve => setTimeout(resolve, MEDIA_PROCESSING_CONFIG.DELAYS.IMAGE_INTERVAL));
               }
             }
 
@@ -929,12 +925,12 @@ export async function handleMediaFiles(
             // 图片数量较少，使用原有的并发处理
             return await Promise.all(
               processedData.images!.map(async (image: string, index: number): Promise<string> => {
-                console.log(`开始处理图片 ${index}: ${image}`);
+                log.info(`开始处理图片 ${index}: ${image}`);
                 const imageKey = `images/${processedData._raw?.id || Date.now()}_${index}`;
 
                 try {
                   const processedUrl = await processMediaFile(image, mediaBucket, imageKey, options);
-                  console.log(`图片 ${index} 处理完成: ${processedUrl}`);
+                  log.info(`图片 ${index} 处理完成: ${processedUrl}`);
 
                   // 验证处理后的URL不是原始小红书链接
                   if (processedUrl === image || processedUrl.includes('xhscdn.com')) {
@@ -943,7 +939,7 @@ export async function handleMediaFiles(
 
                   return processedUrl;
                 } catch (error) {
-                  console.error(`图片 ${index} 处理失败:`, error instanceof Error ? error.message : String(error));
+                  log.error(`图片 ${index} 处理失败:`, error instanceof Error ? error.message : String(error));
                   throw new Error(`图片 ${index} 处理失败: ${error instanceof Error ? error.message : String(error)}`);
                 }
               })
@@ -954,7 +950,7 @@ export async function handleMediaFiles(
         // 使用AbortController实现可控制的超时
         const abortController = new AbortController();
         const timeoutId = setTimeout(() => {
-          console.log(`图片处理超时，正在中止所有请求...`);
+          log.info(`图片处理超时，正在中止所有请求...`);
           abortController.abort();
         }, totalTimeout);
 
@@ -962,7 +958,7 @@ export async function handleMediaFiles(
         try {
           processedImages = await processImagesWithTimeout();
           clearTimeout(timeoutId);
-          console.log('图片处理在超时前完成');
+          log.info('图片处理在超时前完成');
         } catch (error) {
           clearTimeout(timeoutId);
           if (error instanceof Error && error.name === 'AbortError') {
@@ -972,10 +968,10 @@ export async function handleMediaFiles(
         }
 
         processedData.images = processedImages;
-        console.log('所有图片处理完成');
+        log.success('所有图片处理完成');
       } catch (error) {
-        console.error('处理图片数组失败:', error);
-        console.error('错误详情:', error instanceof Error ? error.stack : String(error));
+        log.error('处理图片数组失败:', error);
+        log.error('错误详情:', error instanceof Error ? error.stack : String(error));
         // 抛出错误，不要静默失败
         throw new Error(`图片处理失败: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -987,8 +983,8 @@ export async function handleMediaFiles(
 
     return processedData;
   } catch (error) {
-    console.error('处理媒体文件失败:', error);
-    console.error('错误详情:', error instanceof Error ? error.stack : String(error));
+    log.error('处理媒体文件失败:', error);
+    log.error('错误详情:', error instanceof Error ? error.stack : String(error));
     // 抛出错误，不要返回原始数据
     throw new Error(`媒体文件处理失败: ${error instanceof Error ? error.message : String(error)}`);
   }
