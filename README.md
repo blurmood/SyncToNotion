@@ -1,4 +1,4 @@
-# 企微同步Notion系统 (SyncToNotion)
+# 同步Notion系统 (SyncToNotion)
 
 基于 Cloudflare Workers 的智能内容解析与 Notion 同步系统，支持小红书和抖音内容的自动化处理与同步。
 
